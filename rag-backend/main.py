@@ -3,11 +3,22 @@
 """
 RAG Backend 主入口
 """
+# 首先加载环境变量（必须在导入其他模块之前）
+import os
+import sys
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(__file__), "backend", ".env")
+load_dotenv(env_path, override=True)
 
+# Windows 下需要设置事件循环策略以支持 subprocess（Playwright 需要）
+if sys.platform == 'win32':
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+# 然后导入其他模块
 from backend.config.log import setup_default_logging, get_logger
 from fastapi import FastAPI
 from backend.api import rag, chat, auth, crawl, knowledge_library,visual_graph
-from dotenv import load_dotenv
 import uvicorn
 from contextlib import asynccontextmanager
 
@@ -15,8 +26,7 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI 生命周期管理"""
-    # 启动时执行
-    load_dotenv()    # 加载环境变量
+    # 启动时执行（环境变量已在模块级别加载）
     setup_default_logging() # 初始化日志
 
     logger = get_logger(__name__)

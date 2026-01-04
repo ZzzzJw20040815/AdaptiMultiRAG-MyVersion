@@ -6,6 +6,7 @@ from crawl4ai.deep_crawling import BFSDeepCrawlStrategy, DFSDeepCrawlStrategy
 from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 from crawl4ai.content_filter_strategy import LLMContentFilter, PruningContentFilter, RelevantContentFilter
+from langchain_core.documents import Document
 from backend.param.crawl import CrawlRequest
 from backend.rag.storage.milvus_storage import MilvusStorage
 from backend.rag.storage.lightrag_storage import LightRAGStorage
@@ -358,6 +359,53 @@ async def crawl_doc(site: str, prefix: str, if_llm: bool, model_id: str, provide
 
 
 async def handle_md(md_content, type="print", param=None, collection_id: str = None):
+    # 最大分块字符数 (保守估计: 1 token ≈ 3-4 字符, 限制 8192 tokens, 留余量用 6000 字符)
+    MAX_CHUNK_CHARS = 6000
+    
+    def split_long_chunk(chunk_text: str, max_chars: int = MAX_CHUNK_CHARS) -> list:
+        """将过长的文本块拆分成更小的块"""
+        if len(chunk_text) <= max_chars:
+            return [chunk_text]
+        
+        # 使用简单的段落分割
+        paragraphs = chunk_text.split('\n\n')
+        result_chunks = []
+        current_chunk = ""
+        
+        for para in paragraphs:
+            if len(current_chunk) + len(para) + 2 <= max_chars:
+                current_chunk += para + '\n\n'
+            else:
+                if current_chunk.strip():
+                    result_chunks.append(current_chunk.strip())
+                # 如果单个段落就超过限制，进一步按句子拆分
+                if len(para) > max_chars:
+                    sentences = para.replace('。', '。\n').replace('. ', '. \n').split('\n')
+                    sub_chunk = ""
+                    for sent in sentences:
+                        if len(sub_chunk) + len(sent) <= max_chars:
+                            sub_chunk += sent
+                        else:
+                            if sub_chunk.strip():
+                                result_chunks.append(sub_chunk.strip())
+                            # 如果单个句子还是太长，强制截断
+                            if len(sent) > max_chars:
+                                for i in range(0, len(sent), max_chars):
+                                    result_chunks.append(sent[i:i+max_chars])
+                            else:
+                                sub_chunk = sent
+                    if sub_chunk.strip():
+                        current_chunk = sub_chunk
+                    else:
+                        current_chunk = ""
+                else:
+                    current_chunk = para + '\n\n'
+        
+        if current_chunk.strip():
+            result_chunks.append(current_chunk.strip())
+        
+        return result_chunks if result_chunks else [chunk_text[:max_chars]]
+    
     try:
         if type == "print":
             logger.info(md_content)
@@ -380,6 +428,23 @@ async def handle_md(md_content, type="print", param=None, collection_id: str = N
             if md_result is None or not md_result.chunks:
                 logger.warning("文档分块结果为空，跳过存储")
                 return
+            
+            # 二次拆分过长的分块
+            final_chunks = []
+            for chunk in md_result.chunks:
+                if len(chunk.page_content) > MAX_CHUNK_CHARS:
+                    sub_texts = split_long_chunk(chunk.page_content)
+                    for sub_text in sub_texts:
+                        final_chunks.append(Document(
+                            page_content=sub_text,
+                            metadata=chunk.metadata.copy()
+                        ))
+                else:
+                    final_chunks.append(chunk)
+            
+            # 更新分块结果
+            md_result.chunks = final_chunks
+            md_result.total_chunks = len(final_chunks)
                 
             param[0].store_chunks_batch([md_result])
             logger.info(f"成功存储文档分块，共 {len(md_result.chunks)} 个分块")
@@ -404,6 +469,24 @@ async def handle_md(md_content, type="print", param=None, collection_id: str = N
             if md_result is None or not md_result.chunks:
                 logger.warning("文档分块结果为空，跳过存储")
                 return
+            
+            # 二次拆分过长的分块
+            final_chunks = []
+            for chunk in md_result.chunks:
+                if len(chunk.page_content) > MAX_CHUNK_CHARS:
+                    sub_texts = split_long_chunk(chunk.page_content)
+                    for sub_text in sub_texts:
+                        final_chunks.append(Document(
+                            page_content=sub_text,
+                            metadata=chunk.metadata.copy()
+                        ))
+                    logger.info(f"拆分过长分块: {len(chunk.page_content)} 字符 -> {len(sub_texts)} 个子分块")
+                else:
+                    final_chunks.append(chunk)
+            
+            # 更新分块结果
+            md_result.chunks = final_chunks
+            md_result.total_chunks = len(final_chunks)
             
             param[0].store_chunks_batch([md_result])
             logger.info(f"成功存储文档分块到Milvus，共 {len(md_result.chunks)} 个分块")

@@ -258,12 +258,34 @@
           <div
             v-for="document in selectedLibrary.documents"
             :key="document.id"
-            class="bg-white rounded-lg border border-gray-100 p-4 hover:shadow-sm transition-shadow group"
+            class="bg-white rounded-lg border border-gray-100 p-4 hover:shadow-sm transition-shadow group relative"
           >
-            <div class="flex items-start justify-between mb-3">
-              <div class="flex items-center">
+            <!-- 删除按钮固定在右上角 -->
+            <button
+              @click="removeDocument(document.id)"
+              :disabled="loading"
+              class="absolute top-2 right-2 text-gray-400 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-all disabled:opacity-50 z-10"
+              title="删除文档"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+
+            <div class="flex items-start pr-8">
+              <div class="flex items-center flex-1 min-w-0">
                 <div
-                  class="w-8 h-8 rounded-lg flex items-center justify-center mr-3"
+                  class="w-8 h-8 rounded-lg flex items-center justify-center mr-3 flex-shrink-0"
                   :class="getDocumentTypeClass(document.type)"
                 >
                   <svg
@@ -296,7 +318,7 @@
                   </svg>
                 </div>
                 <div class="flex-1 min-w-0">
-                  <h4 class="text-sm font-normal text-gray-900 truncate">
+                  <h4 class="text-sm font-normal text-gray-900 truncate" :title="document.name">
                     {{ document.name }}
                   </h4>
                   <p class="text-xs text-gray-500 font-light">
@@ -304,28 +326,9 @@
                   </p>
                 </div>
               </div>
-              <button
-                @click="removeDocument(document.id)"
-                :disabled="loading"
-                class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1 rounded transition-all disabled:opacity-50"
-              >
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
             </div>
 
-            <div v-if="document.url" class="text-xs text-gray-700 truncate">
+            <div v-if="document.url" class="text-xs text-gray-700 truncate mt-2" :title="document.url">
               <a :href="document.url" target="_blank" class="hover:underline">
                 {{ document.url }}
               </a>
@@ -520,16 +523,28 @@
               @change="handleFileSelect"
               type="file"
               accept=".pdf,.doc,.docx,.md,.txt"
+              multiple
               required
               :disabled="loading"
               class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent disabled:opacity-50 bg-white"
             />
             <p class="text-xs text-gray-500 mt-1 font-light">
-              支持 PDF、DOC、DOCX、MD、TXT 格式
+              支持 PDF、DOC、DOCX、MD、TXT 格式，可选择多个文件
             </p>
+            <!-- 显示已选择的文件列表 -->
+            <div v-if="documentForm.files && documentForm.files.length > 0" class="mt-2 space-y-1">
+              <div v-for="(file, index) in documentForm.files" :key="index" class="flex items-center justify-between text-sm text-gray-600 bg-gray-50 rounded px-2 py-1">
+                <span class="truncate">{{ file.name }}</span>
+                <button @click="removeFile(index)" type="button" class="text-red-400 hover:text-red-600 ml-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div class="mb-6">
+          <div v-if="documentForm.type === 'link'" class="mb-6">
             <label class="block text-sm font-normal text-gray-700 mb-2"
               >文档名称</label
             >
@@ -589,6 +604,7 @@ const showAddDocumentDialog = ref(false);
 const loading = ref(false);
 const documentLoading = ref(false);
 const error = ref("");
+const isCrawling = ref(false);  // 爬取中状态，防止并发上传
 
 // 表单数据
 const libraryForm = reactive({
@@ -602,7 +618,7 @@ const documentForm = reactive({
   name: "",
   url: "",
   prefix: "",
-  file: null,
+  files: [],  // 改为数组，支持多文件
   content: "",
 });
 
@@ -766,6 +782,26 @@ const addDocument = async () => {
     // 如果是网站链接类型，使用爬取接口
     if (documentForm.type === "link" && documentForm.url) {
       try {
+        // 检查是否正在爬取中
+        if (isCrawling.value) {
+          ElMessage.warning("后台正在处理上一个链接，请等待完成后再添加");
+          loading.value = false;
+          return;
+        }
+
+        // 检查重复链接
+        const existingDoc = selectedLibrary.value.documents?.find(
+          (doc) => doc.url === documentForm.url
+        );
+        if (existingDoc) {
+          ElMessage.error(`链接已存在：${existingDoc.name}`);
+          loading.value = false;
+          return;
+        }
+
+        // 设置爬取中状态
+        isCrawling.value = true;
+
         // 计算prefix：如果用户没有填写，则使用URL最后一个斜杠及之前的内容
         let prefix = documentForm.prefix;
         if (!prefix) {
@@ -796,11 +832,17 @@ const addDocument = async () => {
           showAddDocumentDialog.value = false;
           // 重新加载当前知识库详情
           await selectLibrary(selectedLibrary.value);
+          // 延迟解除爬取锁定（给后台一些时间开始处理）
+          setTimeout(() => {
+            isCrawling.value = false;
+          }, 3000);
           return;
         } else {
+          isCrawling.value = false;
           throw new Error(crawlResponse.msg || "网站爬取失败");
         }
       } catch (crawlError) {
+        isCrawling.value = false;
         console.error("网站爬取失败:", crawlError);
         ElMessage.error("网站爬取失败: " + crawlError.message);
         return;
@@ -808,6 +850,62 @@ const addDocument = async () => {
     }
 
     // 原有的文档添加逻辑（用于文件上传）
+    // 如果是文件上传类型，循环上传每个文件
+    if (documentForm.type === "file" && documentForm.files && documentForm.files.length > 0) {
+      const totalFiles = documentForm.files.length;
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (let i = 0; i < documentForm.files.length; i++) {
+        const file = documentForm.files[i];
+        try {
+          // 1. 获取OSS上传签名URL
+          const uploadResponse = await knowledgeAPI.getUploadUrl(file.name);
+
+          if (uploadResponse.status !== 200 || !uploadResponse.data) {
+            throw new Error("获取上传URL失败");
+          }
+
+          // 2. 上传文件到OSS
+          await knowledgeAPI.uploadFileToOSS(uploadResponse.data, file);
+
+          // 3. 添加文档记录
+          const documentData = {
+            library_id: selectedLibrary.value.id,
+            name: file.name,
+            type: "file",
+            content: "",
+            url: uploadResponse.data.split("?")[0], // 去掉签名参数
+          };
+          
+          const response = await knowledgeAPI.addDocument(documentData);
+          if (response.status === 200) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch (uploadError) {
+          console.error(`文件 ${file.name} 上传失败:`, uploadError);
+          failCount++;
+        }
+      }
+      
+      // 显示上传结果
+      if (successCount > 0) {
+        ElMessage.success(`成功上传 ${successCount}/${totalFiles} 个文件`);
+      }
+      if (failCount > 0) {
+        ElMessage.warning(`${failCount} 个文件上传失败`);
+      }
+      
+      resetDocumentForm();
+      showAddDocumentDialog.value = false;
+      // 重新加载当前知识库详情
+      await selectLibrary(selectedLibrary.value);
+      return;
+    }
+    
+    // 对于链接类型，保持原有逻辑
     let documentData = {
       library_id: selectedLibrary.value.id,
       name: documentForm.name,
@@ -815,36 +913,6 @@ const addDocument = async () => {
       content: documentForm.content || "",
       url: documentForm.url || "",
     };
-
-    // 如果是文件上传类型，需要先上传文件到OSS
-    if (documentForm.type === "file" && documentForm.file) {
-      try {
-        // 1. 获取OSS上传签名URL
-        const uploadResponse = await knowledgeAPI.getUploadUrl(
-          documentForm.file.name
-        );
-
-        if (uploadResponse.status !== 200 || !uploadResponse.data) {
-          throw new Error("获取上传URL失败");
-        }
-
-        // 2. 上传文件到OSS
-        await knowledgeAPI.uploadFileToOSS(
-          uploadResponse.data,
-          documentForm.file
-        );
-
-        // 3. 设置文档的URL为OSS文件路径
-        documentData.url = uploadResponse.data.split("?")[0]; // 去掉签名参数
-        documentData.content = ""; // 文件上传后不需要content字段
-
-        ElMessage.success("文件上传成功");
-      } catch (uploadError) {
-        console.error("文件上传失败:", uploadError);
-        ElMessage.error("文件上传失败: " + uploadError.message);
-        return;
-      }
-    }
 
     const response = await knowledgeAPI.addDocument(documentData);
 
@@ -904,19 +972,18 @@ const removeDocument = async (documentId) => {
   }
 };
 
-// 处理文件选择
+// 处理文件选择（支持多文件）
 const handleFileSelect = (event) => {
-  const file = event.target.files[0];
-  if (file) {
-    documentForm.file = file;
-    if (!documentForm.name) {
-      documentForm.name = file.name;
-    }
-
-    // 对于文件上传，不需要读取文件内容到content字段
-    // 文件将直接上传到OSS
-    documentForm.content = "";
+  const files = Array.from(event.target.files);
+  if (files.length > 0) {
+    // 追加到已选择的文件列表
+    documentForm.files = [...documentForm.files, ...files];
   }
+};
+
+// 移除已选择的文件
+const removeFile = (index) => {
+  documentForm.files.splice(index, 1);
 };
 
 // 重置文档表单
@@ -924,7 +991,7 @@ const resetDocumentForm = () => {
   documentForm.name = "";
   documentForm.url = "";
   documentForm.prefix = "";
-  documentForm.file = null;
+  documentForm.files = [];
   documentForm.content = "";
   documentForm.type = "link";
 };

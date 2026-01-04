@@ -185,14 +185,22 @@ const renderGraph = (data) => {
     },
     tooltip: {
       trigger: 'item',
+      enterable: true, // Allow mouse to enter tooltip (just in case)
       formatter: function(params) {
         if (params.dataType === 'node') {
+          // Keep newline formatting if present in description
+          const description = params.data.value ? params.data.value.replace(/\n/g, '<br/>') : '暂无描述';
+          
+          // Only show type if it's different from the name (case-insensitive)
+          const showType = params.data.category && params.data.name && params.data.category.toLowerCase() !== params.data.name.toLowerCase();
+          const typeHtml = showType ? `<span style="color: #666;">类型: ${params.data.category}</span><br/>` : '';
+          
           return `
-            <div style="max-width: 300px;">
+            <div style="max-width: 400px; white-space: normal; word-break: break-word;">
               <strong>${params.data.name}</strong><br/>
-              <span style="color: #666;">类型: ${params.data.category}</span><br/>
-              <div style="margin-top: 8px; max-height: 100px; overflow-y: auto;">
-                ${params.data.value.substring(0, 200)}${params.data.value.length > 200 ? '...' : ''}
+              ${typeHtml}
+              <div style="margin-top: 8px; line-height: 1.5;">
+                ${description}
               </div>
             </div>
           `

@@ -55,7 +55,7 @@ class LightRAGStorage:
             **kwargs
         ) -> str:
             return await openai_complete_if_cache(
-                model=os.getenv("LLM_DASHSCOPE_CHAT_MODEL", "qwen-plus"),
+                model=os.getenv("LLM_DASHSCOPE_CHAT_MODEL", "qwen-turbo-2025-07-15"),
                 prompt=prompt,
                 system_prompt=system_prompt,
                 history_messages=history_messages,

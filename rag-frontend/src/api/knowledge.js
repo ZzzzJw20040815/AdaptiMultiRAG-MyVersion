@@ -161,19 +161,18 @@ class KnowledgeLibraryAPI {
    */
   async uploadFileToOSS(uploadUrl, file) {
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      
+      // 使用 application/octet-stream 与预签名 URL 的 Content-Type 保持一致
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
         headers: {
-          'Content-Type': file.type
+          'Content-Type': 'application/octet-stream'
         }
       })
       
       if (!response.ok) {
-        throw new Error(`上传失败: ${response.status} ${response.statusText}`)
+        const errorText = await response.text().catch(() => '')
+        throw new Error(`上传失败: ${response.status} ${response.statusText} - ${errorText}`)
       }
       
       return {

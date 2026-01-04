@@ -7,6 +7,15 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+
+# 加载环境变量 (显式指定路径)
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+loaded = load_dotenv(env_path, override=True)
+print(f"Loading .env from: {env_path}")
+print(f"Load result: {loaded}")
+print(f"DB_URL in env: {os.getenv('DB_URL')}")
+
 from backend.config.database import DatabaseFactory
 from backend.model.user import User
 from backend.model.conversation import Conversation

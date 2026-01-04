@@ -74,3 +74,8 @@ rag-backend/backend/rag/storage/lightrag_storage/*/
 !rag-backend/backend/rag/storage/lightrag_storage/.gitkeep
 .git_backup/
 .git_main/
+
+# Docker Volumes (MinIO, Milvus, MySQL, etc.)
+volumes/
+**/volumes/
+rag-backend/backend/volumes/

@@ -58,6 +58,20 @@ class RAGNodes:
         self.logger.info("=" * 50)
         self.logger.info("[RAG Graph] 节点: START - 开始处理")
 
+        # Studio模式或直接调用时，状态可能未完全初始化
+        # 检查并设置默认值
+        if "retrieval_mode" not in state:
+            self.logger.info("状态中缺少retrieval_mode，使用默认值: AUTO")
+            state["retrieval_mode"] = RetrievalMode.AUTO
+
+        if "original_question" not in state:
+            messages = state.get("messages", [])
+            if messages:
+                latest_message = messages[-1].content if hasattr(messages[-1], 'content') else str(messages[-1])
+                state["original_question"] = latest_message
+            else:
+                state["original_question"] = ""
+        
         return state
 
     def check_retrieval_needed_node(self, state: RAGGraphState, runtime: Runtime[RAGContext]) -> RAGGraphState:

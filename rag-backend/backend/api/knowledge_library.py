@@ -76,6 +76,28 @@ async def update_document(
     return await library_service.update_document(document_id, request, current_user)
 
 
+from backend.param.crawl import UploadDocRequest
+from backend.config.oss import get_presigned_url_for_upload
+
+@router.post("/upload-url")
+async def get_upload_url(
+    request: UploadDocRequest,
+    current_user: int = Depends(get_current_user)
+):
+    """获取文档上传URL (Presigned URL)"""
+    logger.info(f"用户 {current_user} 请求上传URL: {request.document_name}")
+    try:
+        # 调用 OSS 配置中的方法生成预签名 URL
+        # 默认存储到 'rag-data' bucket (在 oss.py 中处理)
+        upload_data = get_presigned_url_for_upload(bucket=None, key=request.document_name)
+        
+        # 返回 URL 字符串，适配前端逻辑
+        return Response.success(upload_data["url"])
+    except Exception as e:
+        logger.error(f"生成上传URL失败: {e}")
+        return Response.error(f"生成上传URL失败: {str(e)}")
+
+
 @router.delete("/documents/{document_id}")
 async def delete_document(document_id: int, current_user: int = Depends(get_current_user)):
     """删除文档"""

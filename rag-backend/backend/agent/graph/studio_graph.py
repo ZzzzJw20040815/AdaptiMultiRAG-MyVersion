@@ -38,6 +38,16 @@ def init_models():
         provider_name="qwen",
         chat_model=ChatQwen
     )
+    
+    # Handle API Key for ChatQwen (needs DASHSCOPE_API_KEY env var)
+    api_key = os.getenv("LLM_DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    api_base = os.getenv("LLM_DASHSCOPE_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    
+    if api_key:
+        os.environ["DASHSCOPE_API_KEY"] = api_key
+        os.environ["DASHSCOPE_API_BASE"] = api_base
+    else:
+        print("警告: 未找到 LLM_DASHSCOPE_API_KEY")
 
     chat_model = load_chat_model(
         "qwen:qwen3-max-preview"
@@ -49,13 +59,16 @@ def init_models():
     register_embeddings_provider(
         provider_name="ali",
         embeddings_model="openai",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        base_url=api_base
     )
 
     print("加载向量模型...")
+    # Handle API Key for Embeddings
+    vector_api_key = os.getenv("VECTOR_DASHSCOPE_API_KEY") or api_key
+    
     embeddings_model = load_embeddings(
         "ali:text-embedding-v4",
-        api_key="sk-",
+        api_key=vector_api_key,
         check_embedding_ctx_length=False,
         dimensions=1536
     )
