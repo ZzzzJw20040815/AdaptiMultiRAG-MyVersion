@@ -9,7 +9,7 @@ import { httpClient } from './config.js'
  * 知识库API服务类
  */
 class KnowledgeLibraryAPI {
-  
+
   /**
    * 获取用户的知识库列表
    * @returns {Promise} API响应
@@ -169,12 +169,12 @@ class KnowledgeLibraryAPI {
           'Content-Type': 'application/octet-stream'
         }
       })
-      
+
       if (!response.ok) {
         const errorText = await response.text().catch(() => '')
         throw new Error(`上传失败: ${response.status} ${response.statusText} - ${errorText}`)
       }
-      
+
       return {
         success: true,
         url: uploadUrl.split('?')[0] // 移除查询参数，返回文件URL
@@ -217,6 +217,58 @@ class KnowledgeLibraryAPI {
       return response
     } catch (error) {
       console.error('获取知识图谱失败:', error)
+      throw error
+    }
+  }
+
+  // ==================== 文档处理 API (PR-3) ====================
+
+  /**
+   * 触发文档处理
+   * @param {number} documentId - 文档ID
+   * @param {boolean} forceRetry - 是否强制重试
+   * @returns {Promise} API响应
+   */
+  async processDocument(documentId, forceRetry = false) {
+    try {
+      const response = await httpClient.post(
+        `/api/knowledge/documents/${documentId}/process`,
+        null,
+        { params: { force_retry: forceRetry } }
+      )
+      return response
+    } catch (error) {
+      console.error('触发文档处理失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 重试失败的文档处理
+   * @param {number} documentId - 文档ID
+   * @returns {Promise} API响应
+   */
+  async retryDocument(documentId) {
+    try {
+      const response = await httpClient.post(`/api/knowledge/documents/${documentId}/retry`)
+      return response
+    } catch (error) {
+      console.error('重试文档处理失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 获取知识库文档处理统计
+   * @param {number} libraryId - 知识库ID
+   * @returns {Promise} API响应
+   */
+  async getProcessingStats(libraryId) {
+    try {
+      const response = await httpClient.get(`/api/knowledge/libraries/${libraryId}/processing-stats`)
+      return response
+    } catch (error) {
+      console.error('获取处理统计失败:', error)
       throw error
     }
   }

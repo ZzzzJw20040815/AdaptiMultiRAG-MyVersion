@@ -56,6 +56,23 @@ class DocumentResponse(BaseModel):
     file_path: Optional[str]
     file_size: Optional[int]
     is_processed: bool
+    # 学术元数据字段 (PR-1)
+    paper_title: Optional[str] = None
+    authors: Optional[List[str]] = None
+    affiliations: Optional[List[str]] = None
+    doi: Optional[str] = None
+    abstract: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    publication_venue: Optional[str] = None
+    publication_year: Optional[int] = None
+    references: Optional[List[dict]] = None
+    # 溯源字段
+    source_url: Optional[str] = None
+    file_hash: Optional[str] = None
+    # 解析状态
+    parse_status: str = "pending"
+    parse_error: Optional[str] = None
+    # 时间戳
     created_at: str
     updated_at: str
 

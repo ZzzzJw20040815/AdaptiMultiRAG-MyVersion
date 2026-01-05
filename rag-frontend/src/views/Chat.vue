@@ -882,6 +882,7 @@ import BaseModal from "@/components/BaseModal.vue";
 import BaseButton from "@/components/BaseButton.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import mermaid from "mermaid";
+import { formatCitationsAsHtml, hasCitations } from "@/utils/citationParser.js";
 
 // 初始化markdown渲染器
 const md = new MarkdownIt({
@@ -890,6 +891,24 @@ const md = new MarkdownIt({
   typographer: true,
   breaks: true,
 });
+
+// PR-8: 渲染带引用标记的 Markdown
+const renderMarkdown = (content, citationSources = []) => {
+  if (!content) return ''
+  
+  // 先渲染 Markdown
+  let html = md.render(content)
+  
+  // 如果有引用标记，转换为可交互的 span
+  if (hasCitations(content)) {
+    html = html.replace(/\[(\d+)\]/g, (match, num) => {
+      const citationId = parseInt(num, 10)
+      return `<span class="citation-inline" data-citation-id="${citationId}" title="引用 [${citationId}]">${match}</span>`
+    })
+  }
+  
+  return html
+}
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -1198,11 +1217,6 @@ const scrollToBottom = () => {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
     }
   });
-};
-
-// 渲染markdown内容
-const renderMarkdown = (content) => {
-  return md.render(content);
 };
 
 // 获取节点显示名称
@@ -1629,5 +1643,25 @@ const restorePanelWidth = () => {
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* PR-8: 引用标记样式 */
+:deep(.citation-inline) {
+  color: #2563eb;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  font-size: 0.9em;
+}
+
+:deep(.citation-inline:hover) {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+:deep(.citation-inline)::before {
+  content: '';
 }
 </style>

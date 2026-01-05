@@ -255,7 +255,7 @@
           "
           class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
         >
-          <div
+            <div
             v-for="document in selectedLibrary.documents"
             :key="document.id"
             class="bg-white rounded-lg border border-gray-100 p-4 hover:shadow-sm transition-shadow group relative"
@@ -334,8 +334,63 @@
               </a>
             </div>
 
-            <div class="text-xs text-gray-400 mt-2 font-light">
-              {{ formatTime(document.created_at) }}
+            <!-- 解析状态徽章 (PR-3) -->
+            <div class="flex items-center justify-between mt-3">
+              <div class="flex items-center space-x-2">
+                <!-- 状态徽章 -->
+                <span
+                  class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                  :class="getParseStatusClass(document.parse_status)"
+                >
+                  <span 
+                    v-if="document.parse_status === 'processing'" 
+                    class="animate-spin mr-1 w-3 h-3 border-2 border-current border-t-transparent rounded-full"
+                  ></span>
+                  {{ getParseStatusText(document.parse_status) }}
+                </span>
+                
+                <!-- 重试按钮 (仅失败状态显示) -->
+                <button
+                  v-if="document.parse_status === 'failed'"
+                  @click="retryDocumentProcess(document.id)"
+                  :disabled="loading"
+                  class="inline-flex items-center px-2 py-0.5 text-xs text-orange-600 hover:text-orange-800 hover:bg-orange-50 rounded transition-colors disabled:opacity-50"
+                  title="重新处理"
+                >
+                  <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  重试
+                </button>
+                
+                <!-- 处理按钮 (pending 或 未知状态显示) -->
+                <button
+                  v-if="!document.parse_status || document.parse_status === 'pending'"
+                  @click="triggerDocumentProcess(document.id)"
+                  :disabled="loading"
+                  class="inline-flex items-center px-2 py-0.5 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
+                  title="开始处理"
+                >
+                  <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  处理
+                </button>
+              </div>
+              
+              <div class="text-xs text-gray-400 font-light">
+                {{ formatTime(document.created_at) }}
+              </div>
+            </div>
+            
+            <!-- 错误信息提示 (仅失败状态显示) -->
+            <div 
+              v-if="document.parse_status === 'failed' && document.parse_error"
+              class="mt-2 text-xs text-red-500 bg-red-50 rounded px-2 py-1 truncate"
+              :title="document.parse_error"
+            >
+              {{ document.parse_error }}
             </div>
           </div>
         </div>
@@ -1035,9 +1090,153 @@ const formatTime = (date) => {
   }
 };
 
+// ==================== 文档处理相关函数 (PR-3) ====================
+
+// 获取解析状态样式类
+const getParseStatusClass = (status) => {
+  switch (status) {
+    case "pending":
+      return "bg-gray-100 text-gray-600";
+    case "processing":
+      return "bg-blue-100 text-blue-600";
+    case "completed":
+      return "bg-green-100 text-green-600";
+    case "failed":
+      return "bg-red-100 text-red-600";
+    default:
+      return "bg-gray-100 text-gray-600";
+  }
+};
+
+// 获取解析状态文本
+const getParseStatusText = (status) => {
+  switch (status) {
+    case "pending":
+      return "待处理";
+    case "processing":
+      return "处理中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return "未知";
+  }
+};
+
+// 触发文档处理
+const triggerDocumentProcess = async (documentId) => {
+  try {
+    loading.value = true;
+    const response = await knowledgeAPI.processDocument(documentId);
+    
+    if (response.status === 200) {
+      ElMessage.success("文档处理已启动");
+      // 刷新文档列表以显示新状态
+      await selectLibrary(selectedLibrary.value);
+    } else {
+      throw new Error(response.msg || "触发处理失败");
+    }
+  } catch (err) {
+    console.error("触发文档处理失败:", err);
+    ElMessage.error(err.message || "触发处理失败");
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 重试文档处理
+const retryDocumentProcess = async (documentId) => {
+  try {
+    loading.value = true;
+    const response = await knowledgeAPI.retryDocument(documentId);
+    
+    if (response.status === 200) {
+      ElMessage.success("文档重试处理已启动");
+      // 刷新文档列表以显示新状态
+      await selectLibrary(selectedLibrary.value);
+    } else {
+      throw new Error(response.msg || "重试处理失败");
+    }
+  } catch (err) {
+    console.error("重试文档处理失败:", err);
+    ElMessage.error(err.message || "重试处理失败");
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 轮询定时器
+let pollTimer = null;
+
+// 开始轮询状态
+const startPolling = () => {
+  if (pollTimer) return;
+  
+  pollTimer = setInterval(async () => {
+    // 只有在当前有选中的文档库且有正在处理的文档时才刷新
+    if (selectedLibrary.value && selectedLibrary.value.documents) {
+      const hasProcessing = selectedLibrary.value.documents.some(
+        doc => doc.parse_status === 'processing' || doc.parse_status === 'pending'
+      );
+      
+      if (hasProcessing) {
+        // 静默刷新（不显示 loading）
+        try {
+          const response = await knowledgeAPI.getLibraryDetail(selectedLibrary.value.id);
+          if (response.status === 200) {
+            // 更新文档列表，保留其他状态
+            selectedLibrary.value = response.data;
+          }
+        } catch (e) {
+          console.error("轮询刷新失败:", e);
+        }
+      } else {
+        // 如果没有处理中的文档，停止轮询
+        stopPolling();
+      }
+    } else {
+      stopPolling();
+    }
+  }, 3000); // 每3秒刷新一次
+};
+
+// 停止轮询
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+};
+
+// 监听 selectLibrary 的完成，如果有处理中的文档则启动轮询
+const originalSelectLibrary = selectLibrary;
+// 已经在上面定义了 selectLibrary，这里需要修改它或者在它调用的地方插入逻辑
+// 由于 selectLibrary 是 const 定义的，我不能重新赋值。
+// 我应该在 selectLibrary 的 finally 块或者成功回调里调用 startPolling
+// 但为了改动最小，我可以利用 watch 或者在 onMounted 里做。
+
+import { onUnmounted, watch } from "vue";
+
+// 监听 selectedLibrary 变化来启动轮询
+watch(() => selectedLibrary.value, (newVal) => {
+  if (newVal && newVal.documents) {
+    const hasProcessing = newVal.documents.some(
+      doc => doc.parse_status === 'processing' || doc.parse_status === 'pending'
+    );
+    if (hasProcessing) {
+      startPolling();
+    }
+  }
+}, { deep: true });
+
 // 组件挂载时加载数据
 onMounted(() => {
   loadLibraries();
+});
+
+onUnmounted(() => {
+  stopPolling();
 });
 </script>
 

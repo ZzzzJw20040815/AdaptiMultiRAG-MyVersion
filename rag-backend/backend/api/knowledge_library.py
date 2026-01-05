@@ -103,3 +103,78 @@ async def delete_document(document_id: int, current_user: int = Depends(get_curr
     """删除文档"""
     logger.info(f"用户 {current_user} 请求删除文档: {document_id}")
     return await library_service.delete_document(document_id, current_user)
+
+
+# ==================== 文档处理 API (PR-2) ====================
+from backend.service.document_processor import document_processor
+
+
+@router.post("/documents/{document_id}/process")
+async def process_document(
+    document_id: int,
+    force_retry: bool = False,
+    current_user: int = Depends(get_current_user)
+):
+    """
+    触发文档处理
+    
+    - 将文档状态从 pending 切换为 processing
+    - 异步执行解析任务
+    - 完成后更新为 completed 或 failed
+    """
+    logger.info(f"用户 {current_user} 请求处理文档: {document_id}, force_retry={force_retry}")
+    return await document_processor.process_document(document_id, current_user, force_retry)
+
+
+@router.post("/documents/{document_id}/retry")
+async def retry_document(
+    document_id: int,
+    current_user: int = Depends(get_current_user)
+):
+    """
+    重试失败的文档处理
+    
+    - 仅对 failed 状态的文档有效
+    - 重置状态为 pending 后重新处理
+    """
+    logger.info(f"用户 {current_user} 请求重试文档: {document_id}")
+    return await document_processor.retry_failed_document(document_id, current_user)
+
+
+@router.get("/libraries/{library_id}/processing-stats")
+async def get_processing_stats(
+    library_id: int,
+    current_user: int = Depends(get_current_user)
+):
+    """
+    获取知识库文档处理统计
+    
+    返回各状态（pending/processing/completed/failed）的文档数量
+    """
+    logger.info(f"用户 {current_user} 请求知识库处理统计: {library_id}")
+    return await document_processor.get_processing_stats(library_id, current_user)
+
+
+# ==================== 论文地图 API (PR-11) ====================
+from backend.service.paper_map import get_paper_map_data
+
+
+@router.get("/libraries/{library_id}/paper-map")
+async def get_paper_map(
+    library_id: int,
+    include_entities: bool = True,
+    current_user: int = Depends(get_current_user)
+):
+    """
+    获取知识库的论文地图数据
+    
+    返回文档节点、实体节点和它们之间的关系边
+    用于前端可视化展示
+    """
+    logger.info(f"用户 {current_user} 请求知识库论文地图: {library_id}")
+    try:
+        data = await get_paper_map_data(library_id, include_entities)
+        return Response.success(data)
+    except Exception as e:
+        logger.error(f"获取论文地图失败: {e}")
+        return Response.error(f"获取论文地图失败: {str(e)}")

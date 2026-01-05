@@ -44,6 +44,22 @@ class RAGContext:
             "限制每次检索返回的文档数量。",
         },
     )
+    
+    # PR-9: Reranking 配置
+    enable_reranking: bool = field(
+        default=True,
+        metadata={
+            "description": "是否启用重排序。"
+            "开启后会对检索结果进行相关性评分和过滤。",
+        },
+    )
+    relevance_threshold: float = field(
+        default=0.5,
+        metadata={
+            "description": "相关性阈值 (0-1)。"
+            "低于此阈值的文档将被过滤。",
+        },
+    )
 
     
     # 系统配置

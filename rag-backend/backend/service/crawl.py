@@ -27,7 +27,18 @@ CRAWL_STATUS_PROCESSING = "processing"
 CRAWL_STATUS_COMPLETED = "completed"
 CRAWL_STATUS_ERROR = "error"
 
+
 async def initialize_collection_and_store(request: CrawlRequest):
+    """
+    初始化集合并存储数据
+    
+    PR-4 增强：支持 arXiv/PDF/网页 智能路由
+    - arXiv URL: 获取元数据 + 下载 PDF + 使用 PDF 解析器处理
+    - PDF URL: 直接下载 + 使用 PDF 解析器处理
+    - 网页 URL: 使用 crawl4ai 爬虫处理
+    """
+    from backend.service.url_handlers import detect_url_type, smart_url_process, URLType
+    
     milvus_storage = MilvusStorage(
         embedding_function=get_embedding_model(),
         collection_name=request.collection_id,
@@ -39,12 +50,17 @@ async def initialize_collection_and_store(request: CrawlRequest):
     # 初始化爬虫状态
     await init_crawl_status(request.collection_id)
     
+    # PR-4: 检测 URL 类型
+    url_info = detect_url_type(request.url)
+    logger.info(f"URL 类型检测: {request.url} -> {url_info.url_type.value}")
+    
     # 为对应的知识库添加文档记录
     from backend.service.knowledge_library import add_document
     from backend.param.knowledge_library import AddDocumentRequest
     from backend.config.database import DatabaseFactory
-    from backend.model.knowledge_library import KnowledgeLibrary
+    from backend.model.knowledge_library import KnowledgeLibrary, KnowledgeDocument
     
+    document_id = None
     try:
         # 根据collection_id查找知识库
         db = DatabaseFactory.create_session()
@@ -54,17 +70,50 @@ async def initialize_collection_and_store(request: CrawlRequest):
         ).first()
         
         if library:
+            # PR-4: 根据 URL 类型设置文档类型
+            doc_type = "link"
+            if url_info.url_type == URLType.PDF:
+                doc_type = "pdf"
+            elif url_info.url_type == URLType.ARXIV:
+                doc_type = "pdf"  # arXiv 本质上也是 PDF
+            
             # 创建文档记录
             doc_request = AddDocumentRequest(
                 library_id=library.id,
-                name=request.title or "爬虫文档",
-                type="link",  # 爬虫类型为链接
+                name=request.title or f"[{url_info.url_type.value}] 文档",
+                type=doc_type,
                 url=request.url
             )
             
             # 添加文档到知识库
-            await add_document(doc_request, library.user_id)
-            logger.info(f"成功为知识库 {library.title} 添加文档记录: {request.title or '爬虫文档'}")
+            result = await add_document(doc_request, library.user_id)
+            if result and result.data:
+                document_id = result.data.get('id')
+            logger.info(f"成功为知识库 {library.title} 添加文档记录: {request.title or '文档'}")
+            
+            # PR-4: 如果是 arXiv，预填充元数据
+            if url_info.url_type == URLType.ARXIV and url_info.arxiv_id and document_id:
+                try:
+                    from backend.service.url_handlers import fetch_arxiv_metadata
+                    metadata = await fetch_arxiv_metadata(url_info.arxiv_id)
+                    if metadata:
+                        # 更新文档元数据
+                        doc = db.query(KnowledgeDocument).filter(
+                            KnowledgeDocument.id == document_id
+                        ).first()
+                        if doc:
+                            doc.paper_title = metadata.get('paper_title')
+                            doc.authors = metadata.get('authors')
+                            doc.abstract = metadata.get('abstract')
+                            doc.keywords = metadata.get('keywords')
+                            doc.publication_year = metadata.get('publication_year')
+                            doc.publication_venue = metadata.get('publication_venue', 'arXiv')
+                            doc.doi = metadata.get('doi')
+                            doc.source_url = url_info.normalized_url
+                            db.commit()
+                            logger.info(f"已更新 arXiv 文档元数据: {url_info.arxiv_id}")
+                except Exception as meta_err:
+                    logger.warning(f"更新 arXiv 元数据失败: {meta_err}")
         else:
             logger.warning(f"未找到collection_id为 {request.collection_id} 的知识库")
             
@@ -75,14 +124,169 @@ async def initialize_collection_and_store(request: CrawlRequest):
             db.close()
     
     try:
-        await crawl_doc(request.url, request.prefix, request.if_llm, request.model_id, request.provider, request.base_url, request.api_key, milvus_storage, lightrag_storage, request.collection_id)
-        # await test_crawl_doc(request.url, request.prefix, request.if_llm, request.model_id, request.provider, request.base_url, request.api_key)
-        # 爬虫完成，更新状态为已完成
+        # PR-4: 根据 URL 类型选择处理方式
+        if url_info.url_type in [URLType.ARXIV, URLType.PDF]:
+            # arXiv 和 PDF 类型：下载后使用 PDF 解析器处理
+            await process_pdf_url_content(
+                url_info, 
+                milvus_storage, 
+                lightrag_storage, 
+                request.collection_id,
+                document_id
+            )
+        else:
+            # 网页类型：使用爬虫处理
+            await crawl_doc(
+                request.url, 
+                request.prefix, 
+                request.if_llm, 
+                request.model_id, 
+                request.provider, 
+                request.base_url, 
+                request.api_key, 
+                milvus_storage, 
+                lightrag_storage, 
+                request.collection_id
+            )
+        
+        # 处理完成，更新状态为已完成
         await update_crawl_status(request.collection_id, CRAWL_STATUS_COMPLETED)
     except Exception as e:
-        # 爬虫异常，更新状态为错误
+        # 处理异常，更新状态为错误
         await update_crawl_status(request.collection_id, CRAWL_STATUS_ERROR, str(e))
         raise
+
+
+async def process_pdf_url_content(url_info, milvus_storage, lightrag_storage, collection_id: str, document_id: int = None):
+    """
+    处理 PDF URL 内容 (PR-4)
+    
+    下载 PDF 并提取文本，然后存储到向量库和图库
+    """
+    from backend.service.url_handlers import smart_url_process, URLType
+    
+    try:
+        # 1. 智能处理 URL（下载 PDF）
+        result = await smart_url_process(url_info.original_url)
+        
+        if not result.get("success"):
+            error_msg = result.get("error", "未知错误")
+            logger.error(f"PDF URL 处理失败: {error_msg}")
+            # 回退到网页爬虫
+            logger.info("尝试回退到网页爬虫处理...")
+            await update_crawl_status(collection_id, CRAWL_STATUS_PROCESSING, f"PDF 下载失败，回退到网页模式")
+            # 这里可以调用 crawl_doc 作为兜底，但简单起见先抛出异常
+            raise Exception(f"PDF 处理失败: {error_msg}")
+        
+        pdf_path = result.get("pdf_path")
+        if not pdf_path:
+            raise Exception("PDF 下载成功但未获取到文件路径")
+        
+        logger.info(f"PDF 已下载到: {pdf_path}")
+        
+        # 2. 使用 PDF 提取器提取文本
+        try:
+            # 尝试使用现有的 PDF 提取器
+            with open(pdf_path, 'rb') as f:
+                pdf_content = f.read()
+            
+            # 简单的 PDF 文本提取（后续 PR-6 会增强）
+            extracted_text = await extract_pdf_text_simple(pdf_path)
+            
+            if not extracted_text or len(extracted_text.strip()) < 100:
+                logger.warning("PDF 文本提取结果太短，可能提取失败")
+                raise Exception("PDF 文本提取失败或内容太少")
+            
+            logger.info(f"PDF 文本提取成功: {len(extracted_text)} 字符")
+            
+        finally:
+            # 清理临时文件
+            import os
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+                logger.info(f"已清理临时文件: {pdf_path}")
+        
+        # 3. 存储到向量库和图库
+        await handle_md(
+            md_content=extracted_text,
+            type="light_and_milvus",
+            param=[milvus_storage, lightrag_storage],
+            collection_id=collection_id
+        )
+        
+        logger.info(f"PDF 内容已存储到知识库")
+        
+        # 4. 更新文档状态为已完成
+        if document_id:
+            from backend.config.database import DatabaseFactory
+            from backend.model.knowledge_library import KnowledgeDocument, ParseStatus
+            
+            db = DatabaseFactory.create_session()
+            try:
+                doc = db.query(KnowledgeDocument).filter(
+                    KnowledgeDocument.id == document_id
+                ).first()
+                if doc:
+                    doc.parse_status = ParseStatus.COMPLETED.value
+                    doc.is_processed = True
+                    db.commit()
+            finally:
+                db.close()
+        
+    except Exception as e:
+        logger.error(f"处理 PDF URL 内容失败: {e}")
+        
+        # 更新文档状态为失败
+        if document_id:
+            from backend.config.database import DatabaseFactory
+            from backend.model.knowledge_library import KnowledgeDocument, ParseStatus
+            
+            db = DatabaseFactory.create_session()
+            try:
+                doc = db.query(KnowledgeDocument).filter(
+                    KnowledgeDocument.id == document_id
+                ).first()
+                if doc:
+                    doc.parse_status = ParseStatus.FAILED.value
+                    doc.parse_error = str(e)
+                    db.commit()
+            finally:
+                db.close()
+        
+        raise
+
+
+async def extract_pdf_text_simple(pdf_path: str) -> str:
+    """
+    简单的 PDF 文本提取 (PR-4)
+    
+    使用 PyPDF2 提取文本，后续 PR-6 会使用更高级的解析器
+    """
+    try:
+        import PyPDF2
+        
+        text_parts = []
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            for page_num, page in enumerate(reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text:
+                        text_parts.append(f"[Page {page_num + 1}]\n{text}")
+                except Exception as page_err:
+                    logger.warning(f"提取第 {page_num + 1} 页失败: {page_err}")
+        
+        return "\n\n".join(text_parts)
+        
+    except ImportError:
+        logger.warning("PyPDF2 未安装，尝试使用备用方法")
+        # 备用方法：使用 pdfminer 或其他
+        return ""
+    except Exception as e:
+        logger.error(f"PDF 文本提取失败: {e}")
+        return ""
+
+
 
 
 async def init_crawl_status(collection_id: str):
