@@ -17,6 +17,8 @@ class TextChunker:
     2. 语义分块 - 基于语义相似度分割
     3. 递归分块 - 按分隔符优先级递归分割
     4. Markdown标题分块 - 按Markdown标题结构分割
+    
+    PR-5 增强: 为每个分块添加溯源元数据
     """
     
     def __init__(self, embeddings_model: Optional[Embeddings] = None):
@@ -42,33 +44,135 @@ class TextChunker:
                 chunks=[],
                 strategy=config.strategy,
                 total_chunks=0,
-                document_name=document.document_name
+                document_name=document.document_name,
+                doc_id=document.doc_id,
+                source_url=document.source_url
             )
         
         try:
             if config.strategy == ChunkStrategy.CHARACTER:
-                return self._character_chunk(document.content, config, document.document_name)
+                result = self._character_chunk(document.content, config, document.document_name)
             elif config.strategy == ChunkStrategy.SEMANTIC:
-                return self._semantic_chunk(document.content, config, document.document_name)
+                result = self._semantic_chunk(document.content, config, document.document_name)
             elif config.strategy == ChunkStrategy.RECURSIVE:
-                return self._recursive_chunk(document.content, config, document.document_name)
+                result = self._recursive_chunk(document.content, config, document.document_name)
             elif config.strategy == ChunkStrategy.MARKDOWN_HEADER:
-                return self._markdown_header_chunk(document.content, config, document.document_name)
+                result = self._markdown_header_chunk(document.content, config, document.document_name)
             else:
                 return ChunkResult(
                     chunks=[],
                     strategy=config.strategy,
                     total_chunks=0,
-                    document_name=document.document_name
+                    document_name=document.document_name,
+                    doc_id=document.doc_id,
+                    source_url=document.source_url
                 )
+            
+            # PR-5: 添加溯源元数据到每个分块
+            if config.add_source_metadata and result.chunks:
+                result = self._enrich_chunks_metadata(
+                    result, 
+                    document, 
+                    config
+                )
+            
+            # 设置结果的 doc_id 和 source_url
+            result.doc_id = document.doc_id
+            result.source_url = document.source_url
+            
+            return result
                 
         except Exception as e:
             return ChunkResult(
                 chunks=[],
                 strategy=config.strategy,
                 total_chunks=0,
-                document_name=document.document_name
+                document_name=document.document_name,
+                doc_id=document.doc_id,
+                source_url=document.source_url
             )
+    
+    def _enrich_chunks_metadata(
+        self, 
+        result: ChunkResult, 
+        document: DocumentContent, 
+        config: ChunkConfig
+    ) -> ChunkResult:
+        """
+        为分块添加溯源元数据 (PR-5)
+        
+        Args:
+            result: 原始分块结果
+            document: 文档内容
+            config: 分块配置
+            
+        Returns:
+            ChunkResult: 增强后的分块结果
+        """
+        from datetime import datetime
+        
+        original_text = document.content
+        total_chunks = len(result.chunks)
+        
+        enriched_chunks = []
+        current_pos = 0
+        
+        for idx, chunk in enumerate(result.chunks):
+            chunk_text = chunk.page_content
+            
+            # 计算字符范围
+            char_start = original_text.find(chunk_text, current_pos)
+            if char_start == -1:
+                # 如果找不到（可能有重叠），从头开始找
+                char_start = original_text.find(chunk_text)
+            
+            char_end = char_start + len(chunk_text) if char_start != -1 else None
+            
+            # 更新搜索位置（考虑重叠）
+            if char_start != -1:
+                current_pos = max(current_pos, char_start + 1)
+            
+            # 提取或保留已有的章节信息
+            section = chunk.metadata.get('section') or chunk.metadata.get('Header_1') or chunk.metadata.get('Header_2')
+            section_hierarchy = []
+            for i in range(1, 7):
+                header_key = f'Header_{i}'
+                if header_key in chunk.metadata and chunk.metadata[header_key]:
+                    section_hierarchy.append(chunk.metadata[header_key])
+            
+            # 构建增强的元数据
+            enhanced_metadata = {
+                # 文档标识
+                'doc_id': document.doc_id,
+                'doc_name': document.document_name,
+                'source_url': document.source_url,
+                
+                # 位置信息
+                'char_start': char_start if char_start != -1 else None,
+                'char_end': char_end,
+                
+                # 分块信息
+                'chunk_index': idx,
+                'total_chunks': total_chunks,
+                
+                # 章节信息 (如果有)
+                'section': section,
+                'section_hierarchy': section_hierarchy if section_hierarchy else None,
+                
+                # 时间戳
+                'created_at': datetime.now().isoformat(),
+            }
+            
+            # 合并原有的元数据（保留 Header_X 等）
+            final_metadata = {**chunk.metadata, **{k: v for k, v in enhanced_metadata.items() if v is not None}}
+            
+            enriched_chunks.append(Document(
+                page_content=chunk_text,
+                metadata=final_metadata
+            ))
+        
+        result.chunks = enriched_chunks
+        return result
     
     def _character_chunk(self, text: str, config: ChunkConfig, document_name: str) -> ChunkResult:
         """字符级分块"""
@@ -82,9 +186,7 @@ class TextChunker:
         
         chunks = text_splitter.create_documents([text])
         
-        # 清空metadata
-        for chunk in chunks:
-            chunk.metadata = {}
+        # PR-5: 不再清空 metadata，保留后续填充
         
         return ChunkResult(
             chunks=chunks,
@@ -116,9 +218,7 @@ class TextChunker:
         
         chunks = semantic_chunker.create_documents([text])
         
-        # 清空metadata
-        for chunk in chunks:
-            chunk.metadata = {}
+        # PR-5: 不再清空 metadata，保留后续填充
         
         return ChunkResult(
             chunks=chunks,
@@ -138,9 +238,7 @@ class TextChunker:
         
         chunks = recursive_splitter.create_documents([text])
         
-        # 清空metadata
-        for chunk in chunks:
-            chunk.metadata = {}
+        # PR-5: 不再清空 metadata，保留后续填充
         
         return ChunkResult(
             chunks=chunks,
@@ -157,13 +255,13 @@ class TextChunker:
         
         chunks = markdown_splitter.split_text(text)
         
-        # 转换为Document对象并清空metadata
+        # 转换为Document对象，保留 Header 元数据 (PR-5)
         if isinstance(chunks, list) and chunks:
             if isinstance(chunks[0], Document):
-                # 清空所有Document的metadata
-                documents = [Document(page_content=doc.page_content, metadata={}) for doc in chunks]
+                # 保留所有 Document 的原始 metadata（包含 Header_X）
+                documents = chunks
             else:
-                # 如果是字符串列表，转换为Document（metadata已经为空）
+                # 如果是字符串列表，转换为 Document
                 documents = [Document(page_content=chunk, metadata={}) for chunk in chunks]
         else:
             documents = []

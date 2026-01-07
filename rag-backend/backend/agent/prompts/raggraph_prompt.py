@@ -156,20 +156,27 @@ reasoning: [判断理由] - 详细说明为什么需要或不需要检索的原�
     
     @staticmethod
     def get_answer_generation_prompt() -> str:
-        """获取答案生成的提示词
+        """获取答案生成的提示词 (PR-7 增强)
+        
+        要求 LLM 在回答中标注引用 [1][2]...
         
         Returns:
             答案生成的提示词模板
         """
-        return """
-你是一个专业的知识整合助手。请基于检索到的相关文档，为用户问题提供准确、全面的答案。
+        return """你是一个专业的知识整合助手。请基于检索到的相关文档，为用户问题提供准确、全面的答案。
+
+**重要：引用格式要求**
+
+1. 在回答中使用 [1]、[2] 等标记引用来源
+2. 每个论点都应该有对应的引用支持
+3. 引用编号与文档编号保持一致
+4. 回答末尾附上引用列表
 
 **回答要求：**
 1. 答案应该准确、客观、有条理
 2. 优先使用检索到的权威信息
 3. 如果信息不足，请明确指出
-4. 提供信息来源和参考依据
-5. 保持回答的简洁性和可读性
+4. 保持回答的简洁性和可读性
 
 **用户问题：**
 {question}
@@ -177,4 +184,125 @@ reasoning: [判断理由] - 详细说明为什么需要或不需要检索的原�
 **检索到的相关文档（共{doc_count}个）：**
 {documents}
 
+**输出格式示例：**
+
+根据检索到的文档，[核心论点1][1]。进一步研究表明，[论点2][2]。
+
+**参考来源：**
+[1] 文档名称1 - 相关章节
+[2] 文档名称2 - 相关章节
 """
+
+    @staticmethod
+    def get_answer_generation_with_citations_prompt() -> str:
+        """获取带结构化引用的答案生成提示词 (PR-7)
+        
+        要求 LLM 返回 JSON 格式的结构化回答
+        
+        Returns:
+            答案生成的提示词模板
+        """
+        return """你是一个专业的学术知识整合助手。请基于检索到的相关文档，为用户问题提供准确、全面的答案，并提供精确的引用信息。
+
+## 任务要求
+
+1. 仔细阅读所有检索到的文档
+2. 整合相关信息回答用户问题
+3. 在回答中使用 [1]、[2] 等标记引用来源
+4. 每个关键论点都需要引用支持
+5. 返回结构化的 JSON 格式
+
+## 用户问题
+
+{question}
+
+## 检索到的文档（共 {doc_count} 个）
+
+{documents}
+
+## 输出格式
+
+请严格按照以下 JSON 格式返回：
+
+```json
+{{
+  "answer": "你的回答内容，包含 [1][2] 等引用标记...",
+  "citations": [
+    {{
+      "citation_id": 1,
+      "doc_index": 0,
+      "cited_text": "引用的原文片段（最多100字）",
+      "relevance": "该引用与回答的关联说明"
+    }},
+    {{
+      "citation_id": 2,
+      "doc_index": 1,
+      "cited_text": "引用的原文片段",
+      "relevance": "关联说明"
+    }}
+  ],
+  "confidence": 0.85,
+  "limitations": "回答的局限性说明（如果有）"
+}}
+```
+
+## 注意事项
+
+1. answer 字段中的引用标记 [n] 必须与 citations 数组中的 citation_id 对应
+2. doc_index 是文档在输入列表中的索引（从0开始）
+3. cited_text 应该是文档中的原文，不要改写
+4. confidence 是你对回答准确性的评估（0-1）
+5. 如果信息不足以回答问题，请在 limitations 中说明
+
+请只返回 JSON，不要添加其他说明文字。
+"""
+
+    @staticmethod
+    def format_documents_for_citation(documents: list) -> str:
+        """格式化文档列表用于引用 Prompt (PR-7)
+        
+        Args:
+            documents: 检索到的文档列表
+            
+        Returns:
+            格式化后的文档字符串
+        """
+        if not documents:
+            return "（无相关文档）"
+        
+        formatted_parts = []
+        for idx, doc in enumerate(documents):
+            # 获取元数据
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            if isinstance(doc, dict):
+                metadata = doc.get('metadata', {})
+                content = doc.get('page_content', doc.get('content', ''))
+            else:
+                content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+            
+            # 构建文档标题
+            doc_name = metadata.get('doc_name') or metadata.get('document_name') or f'文档{idx+1}'
+            page_info = f"p.{metadata.get('page_number')}" if metadata.get('page_number') else ""
+            section_info = f"§{metadata.get('section')}" if metadata.get('section') else ""
+            location = f" ({page_info or section_info})" if page_info or section_info else ""
+            
+            # 构建学术信息（如果有）
+            academic_info = ""
+            if metadata.get('paper_title'):
+                academic_info = f"\n   论文: {metadata.get('paper_title')}"
+                if metadata.get('authors'):
+                    authors = metadata.get('authors')
+                    if isinstance(authors, list):
+                        author_str = ", ".join(authors[:3])
+                        if len(authors) > 3:
+                            author_str += " 等"
+                        academic_info += f" | 作者: {author_str}"
+                if metadata.get('publication_year'):
+                    academic_info += f" | 年份: {metadata.get('publication_year')}"
+            
+            formatted_parts.append(
+                f"[{idx+1}] {doc_name}{location}{academic_info}\n"
+                f"内容: {content[:800]}..."
+            )
+        
+        return "\n\n---\n\n".join(formatted_parts)

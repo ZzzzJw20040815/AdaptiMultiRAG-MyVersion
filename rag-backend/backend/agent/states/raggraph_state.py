@@ -3,7 +3,7 @@ from enum import Enum
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from ..contexts.raggraph_context import RAGContext
-from ..models.raggraph_models import RetrievalMode, RetrievedDocument
+from ..models.raggraph_models import RetrievalMode, RetrievedDocument, CitationSource
 
 
 class RAGGraphState(TypedDict, total=False):
@@ -39,9 +39,11 @@ class RAGGraphState(TypedDict, total=False):
     vector_db_results: List[RetrievedDocument]  # 向量数据库检索结果
     graph_db_results: List[RetrievedDocument]   # 图数据库检索结果
     
-    # ==================== 答案生成 ====================
+    # ==================== 答案生成 (PR-7 增强) ====================
     final_answer: str                  # 最终答案
-    answer_sources: List[str]          # 答案来源列表
+    citation_sources: List[Dict[str, Any]]  # 引用来源列表 (CitationSource.to_dict())
+    answer_confidence: Optional[float] # 回答置信度 (0-1)
+    answer_limitations: Optional[str]  # 回答局限性说明
 
 
 def create_initial_rag_state(
@@ -87,9 +89,11 @@ def create_initial_rag_state(
         vector_db_results=[],
         graph_db_results=[],
         
-        # ==================== 答案生成 ====================
+        # ==================== 答案生成 (PR-7) ====================
         final_answer="",
-        answer_sources=[]
+        citation_sources=[],
+        answer_confidence=None,
+        answer_limitations=None
     )
     
 

@@ -11,6 +11,8 @@ from backend.agent.contexts.raggraph_context import RAGContext
 from backend.param.chat import ChatRequest
 from backend.config.log import get_logger
 from backend.service import conversation as conversation_service
+from backend.config.database import DatabaseFactory
+from backend.model.knowledge_library import KnowledgeLibrary
 from backend.service.chat_history import save_chat_message
 
 logger = get_logger(__name__)
@@ -85,6 +87,22 @@ def _validate_chat_request(chat_request: ChatRequest) -> Dict[str, Any]:
         "content": content
     }
 
+def _get_latest_collection_id(user_id: str) -> Optional[str]:
+    db = None
+    try:
+        db = DatabaseFactory.create_session()
+        library = db.query(KnowledgeLibrary).filter(
+            KnowledgeLibrary.user_id == user_id,
+            KnowledgeLibrary.is_active == True
+        ).order_by(KnowledgeLibrary.updated_at.desc()).first()
+        return library.collection_id if library else None
+    except Exception as e:
+        logger.warning(f"获取最新知识库失败: {e}")
+        return None
+    finally:
+        if db:
+            db.close()
+
 async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any], None]:
     """
     处理聊天请求 - 流式响应
@@ -111,8 +129,15 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
         user_id = validation["user_id"]
         content = validation["content"]
         
-        # 获取 collection_id，如果没有提供则使用默认值
-        collection_id = chat_request.collection_id or "kb12_1760260169325"
+        # 获取 collection_id，如果没有提供则使用用户最新知识库
+        collection_id = chat_request.collection_id
+        if not collection_id:
+            collection_id = _get_latest_collection_id(user_id)
+            if collection_id:
+                logger.info(f"未提供collection_id，使用最新知识库: {collection_id}")
+            else:
+                collection_id = "kb12_1760260169325"
+                logger.warning(f"未找到可用知识库，回退默认collection_id={collection_id}")
         logger.info(f"\n===========\n使用 collection_id={collection_id} 处理聊天请求\n===========\n")
         
         # 基于 collection_id 动态创建 RAGGraph 实例
