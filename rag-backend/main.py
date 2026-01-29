@@ -18,7 +18,7 @@ if sys.platform == 'win32':
 # 然后导入其他模块
 from backend.config.log import setup_default_logging, get_logger
 from fastapi import FastAPI
-from backend.api import rag, chat, auth, crawl, knowledge_library,visual_graph
+from backend.api import rag, chat, auth, crawl, knowledge_library, visual_graph, kg_task
 import uvicorn
 from contextlib import asynccontextmanager
 
@@ -42,6 +42,7 @@ app.include_router(auth.router)
 app.include_router(crawl.router)
 app.include_router(knowledge_library.router)
 app.include_router(visual_graph.router)
+app.include_router(kg_task.router)
 
 @app.get("/health")
 async def read_root():

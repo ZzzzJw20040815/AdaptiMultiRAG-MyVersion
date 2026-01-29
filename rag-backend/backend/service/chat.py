@@ -167,7 +167,7 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
             session_id=session_id,
             user_id=user_id,
             retrieval_mode=chat_request.retrieval_mode,
-            max_retrieval_docs=chat_request.max_retrieval_docs or 3,
+            max_retrieval_docs=chat_request.max_retrieval_docs or 5,
             system_prompt=chat_request.system_prompt or "你是一个专业的RAG助手，能够基于检索到的信息提供准确的回答。"
         )
         
@@ -212,17 +212,25 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
                     # 根据节点类型处理content
                     content = ""
                     if node_name == "check_retrieval_needed":
-                        content = f"节点名称为{node_name}，LLM判断是否需要检索结果为{node_output['need_retrieval']}，理由为{node_output['need_retrieval_reason']}，提取原始问题为{node_output['original_question']}"
+                        need_retrieval = node_output.get('need_retrieval', 'unknown')
+                        need_retrieval_reason = node_output.get('need_retrieval_reason', '未提供理由')
+                        original_question = node_output.get('original_question', '')
+                        content = f"节点名称为{node_name}，LLM判断是否需要检索结果为{need_retrieval}，理由为{need_retrieval_reason}，提取原始问题为{original_question}"
                     elif node_name == "expand_subquestions":
-                        extraquestion = "\n".join([f"{i+1}. {q}" for i, q in enumerate(node_output['subquestions'])])
+                        subquestions = node_output.get('subquestions', [])
+                        extraquestion = "\n".join([f"{i+1}. {q}" for i, q in enumerate(subquestions)])
                         content = f"节点名称为{node_name}，扩展子问题为{extraquestion}"
                     elif node_name == "classify_question_type":
-                        content = f"节点名称为{node_name}，LLM判断检索模式为{node_output['retrieval_mode']}，理由为{node_output['retrieval_mode_reason']}"
+                        retrieval_mode = node_output.get('retrieval_mode', 'unknown')
+                        retrieval_mode_reason = node_output.get('retrieval_mode_reason', '未提供理由')
+                        content = f"节点名称为{node_name}，LLM判断检索模式为{retrieval_mode}，理由为{retrieval_mode_reason}"
                     elif node_name == "vector_db_retrieval":
-                        vectordoc = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(node_output['vector_db_results'])])
+                        vector_results = node_output.get('vector_db_results', [])
+                        vectordoc = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(vector_results)])
                         content = f"节点名称为{node_name}，向量检索到的文档为{vectordoc}"
                     elif node_name == "graph_db_retrieval":
-                        graphdoc = "\n".join([f"{i+1}. {doc}" for i, doc in enumerate(node_output['graph_db_results'])])
+                        graph_results = node_output.get('graph_db_results', [])
+                        graphdoc = "\n".join([f"{i+1}. {doc}" for i, doc in enumerate(graph_results)])
                         content = f"节点名称为{node_name}，图检索到的文档为{graphdoc}"
                     elif node_name == "generate_answer" or node_name == "direct_answer":
                         content = f"节点名称为{node_name}，回答完毕"
@@ -261,7 +269,13 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
                     
                 if mode =="messages":
                     chunkmessage,metadata=chunk
-                    if chunkmessage.response_metadata and chunkmessage.response_metadata["finish_reason"] == "stop":
+                    # 只转发来自答案生成节点的消息，过滤掉其他节点的LLM输出
+                    langgraph_node = metadata.get("langgraph_node", "")
+                    if langgraph_node not in ("generate_answer", "direct_answer"):
+                        # 非答案节点的消息（如 classify_question_type 的 JSON 输出）不发送给用户
+                        continue
+                    
+                    if chunkmessage.response_metadata and chunkmessage.response_metadata.get("finish_reason") == "stop":
                         yield {
                         "type": "token",
                         "session_id": session_id,

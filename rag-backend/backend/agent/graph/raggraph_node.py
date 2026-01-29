@@ -13,6 +13,9 @@ from ..prompts.raggraph_prompt import (
 from langmem import create_manage_memory_tool, create_search_memory_tool
 from langchain_core.messages import AIMessage
 from ...config.log import get_logger
+from ...service.chunk_filter import get_chunk_filter_service
+from ...service.reranker_service import get_reranker_service
+from ...service.source_filter_service import build_source_filter, is_simple_question, get_url_to_name_mapping
 import asyncio
 
 class RAGNodes:
@@ -184,6 +187,12 @@ class RAGNodes:
 
         self.logger.info(f"原始问题: {original_question}")
 
+        # P4 优化：简单问题跳过子问题扩展，降低延迟
+        if is_simple_question(original_question):
+            self.logger.info("[P4] 检测到简单问题，跳过子问题扩展")
+            state["subquestions"] = []
+            return state
+
         try:
             # 获取子问题扩展提示词
             prompt_template = RAGGraphPrompts.get_subquestion_expansion_prompt()
@@ -320,11 +329,28 @@ class RAGNodes:
         try:
             # 从context获取检索配置
             context = runtime.context
-            max_docs = context.max_retrieval_docs if context else 3
+            max_docs = context.max_retrieval_docs if context else 5
 
-            # 创建混合检索器
+            # 获取 collection_id 用于动态白名单过滤
+            collection_id = self.milvus_storage.collection_name if self.milvus_storage else None
+
+            # P2 前置：构建动态白名单来源过滤表达式
+            source_filter_expr = build_source_filter(original_question, collection_id) if collection_id else None
+            
+            # 创建混合检索器（带 filter）
+            # 注意：Milvus 使用 'expr' 参数，不是 'filter'
+            search_kwargs = {"k": max_docs}
+            if source_filter_expr:
+                search_kwargs["expr"] = source_filter_expr  # Milvus 使用 expr 参数
+                self.logger.info(f"[P2动态白名单] 使用 Milvus expr: {source_filter_expr}")
+            else:
+                self.logger.info("[P2] 无匹配的文档白名单，进行全局搜索")
+            
+            # 调试日志：打印完整的 search_kwargs
+            self.logger.info(f"[DEBUG] search_kwargs = {search_kwargs}")
+            
             hybrid_retriever = self.milvus_storage.create_hybrid_retriever(
-                search_kwargs={"k": max_docs}
+                search_kwargs=search_kwargs
             )
 
             # 收集所有需要检索的问题
@@ -348,6 +374,12 @@ class RAGNodes:
                     self.logger.error(f"问题 {i+1} 检索失败: {search_error}")
 
             self.logger.info(f"总共检索到 {len(all_retrieved_docs)} 个文档")
+            
+            # 调试日志：打印每个文档的 metadata（检查 document_name 是否正确）
+            for idx, doc in enumerate(all_retrieved_docs[:5]):  # 只打印前5个
+                doc_name = doc.metadata.get('document_name', 'N/A')
+                content_preview = doc.page_content[:80] if doc.page_content else ''
+                self.logger.info(f"[DEBUG] 文档{idx+1}: document_name={doc_name}, 内容预览={content_preview}...")
 
             # 转换为RetrievedDocument格式
             converted_docs = []
@@ -377,9 +409,22 @@ class RAGNodes:
 
             self.logger.info(f"去重后文档数: {len(unique_docs)}")
 
-            # 更新状态
-            state["retrieved_docs"] = unique_docs
-            state["vector_db_results"] = unique_docs
+            # 过滤无用内容（参考文献、作者贡献、LaTeX残留等）
+            chunk_filter = get_chunk_filter_service()
+            filtered_docs = chunk_filter.filter_chunks(unique_docs)
+            self.logger.info(f"过滤后文档数: {len(filtered_docs)} (过滤了 {len(unique_docs) - len(filtered_docs)} 个无用文段)")
+
+            # Rerank: 按语义相关性重排序和过滤
+            reranker = get_reranker_service()
+            reranked_docs = reranker.rerank(
+                query=original_question,
+                documents=filtered_docs
+            )
+            self.logger.info(f"Rerank后文档数: {len(reranked_docs)} (过滤了 {len(filtered_docs) - len(reranked_docs)} 个低相关性文段)")
+
+            # 更新状态（P2 前置已在检索阶段完成，无需事后过滤）
+            state["retrieved_docs"] = reranked_docs
+            state["vector_db_results"] = reranked_docs
 
         except Exception as e:
             self.logger.error(f"向量检索失败: {e}")
@@ -410,6 +455,14 @@ class RAGNodes:
         self.logger.info(f"执行图数据库检索，查询: {query_text}")
 
         try:
+            # 获取知识库中的实际文献列表（用于防止 LLM 幻觉）
+            collection_id = self.milvus_storage.collection_name if self.milvus_storage else None
+            available_docs = get_url_to_name_mapping(collection_id) if collection_id else {}
+            doc_names = list(available_docs.values())
+            self.logger.info(f"知识库实际文献数量: {len(doc_names)}")
+            
+            # 将文献列表存储到 state 中，供答案生成节点使用
+            state["available_doc_names"] = doc_names
 
             # 执行图数据库检索 - 使用global模式进行图检索
             result = await self.lightrag_storage.query(
@@ -428,6 +481,11 @@ class RAGNodes:
                     # 只保留DC标记之后的内容
                     result = result.split(dc_marker, 1)[1].strip()
                     #self.logger.info(f"提取Document Chunks后的结果: {result}")
+
+                # 方案A：在结果前注入文献清单，防止LLM幻觉
+                if doc_names:
+                    doc_list_text = "\n".join([f"  - {name}" for name in doc_names])
+                    result = f"【知识库文献清单（共{len(doc_names)}篇）】\n{doc_list_text}\n\n【检索内容】\n{result}"
 
                 # 将检索结果转换为文档格式
                 graph_doc = RetrievedDocument(
@@ -482,13 +540,26 @@ class RAGNodes:
         self.logger.info(f"可用文档数量: {len(retrieved_docs)}")
 
         try:
+            # 获取 URL -> 名称映射，用于将 Milvus 中的 URL 转换为友好名称
+            collection_id = self.milvus_storage.collection_name if self.milvus_storage else None
+            url_to_name = get_url_to_name_mapping(collection_id) if collection_id else {}
+            
+            # 方案B：获取可用文献名称列表（可能来自图检索节点或重新获取）
+            available_doc_names = state.get("available_doc_names", [])
+            if not available_doc_names and url_to_name:
+                available_doc_names = list(url_to_name.values())
+            
+            self.logger.info(f"可引用文献列表: {available_doc_names}")
+            
             # 准备文档内容
             documents_text = ""
             if retrieved_docs:
                 for i, doc in enumerate(retrieved_docs):
                     # 获取文档来源信息
-                    source = doc.metadata.get("document_name", f"文档{i+1}")
-                    documents_text += f"\n[文档 {i+1} - {source}]:\n{doc.page_content}\n"
+                    raw_source = doc.metadata.get("document_name", doc.metadata.get("source", f"未知来源_{i+1}"))
+                    # 将 URL 转换为友好名称
+                    source = url_to_name.get(raw_source, raw_source)
+                    documents_text += f"\n[{source}]:\n{doc.page_content}\n"
             else:
                 documents_text = "暂无检索到的相关文档。"
 
@@ -497,7 +568,9 @@ class RAGNodes:
             prompt = prompt_template.format(
                 question=original_question,
                 documents=documents_text,
-                doc_count=len(retrieved_docs)
+                doc_count=len(retrieved_docs),
+                available_docs="\n".join([f"  - {name}" for name in available_doc_names]) if available_doc_names else "（未知）",
+                available_doc_count=len(available_doc_names)
             )
 
             # 直接调用LLM生成答案

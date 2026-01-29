@@ -19,6 +19,12 @@ class KnowledgeLibrary(Base):
     created_at = Column(DateTime, server_default=func.now(), comment='创建时间')
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment='更新时间')
     
+    # 知识图谱构建状态字段
+    kg_status = Column(String(20), default='pending', nullable=False, comment='知识图谱状态: pending/running/paused/completed/cancelled/failed')
+    kg_total_chunks = Column(Integer, default=0, nullable=False, comment='知识图谱总分块数')
+    kg_processed_chunks = Column(Integer, default=0, nullable=False, comment='知识图谱已处理分块数')
+    kg_error_message = Column(Text, nullable=True, comment='知识图谱构建错误信息')
+    
     # 关联文档
     documents = relationship("KnowledgeDocument", back_populates="library", cascade="all, delete-orphan")
     
@@ -32,7 +38,12 @@ class KnowledgeLibrary(Base):
             'is_active': self.is_active,
             'documents': [doc.to_dict() for doc in self.documents] if self.documents else [],
             'created_at': to_china_time(self.created_at).isoformat() if self.created_at else None,
-            'updated_at': to_china_time(self.updated_at).isoformat() if self.updated_at else None
+            'updated_at': to_china_time(self.updated_at).isoformat() if self.updated_at else None,
+            # 知识图谱状态
+            'kg_status': self.kg_status,
+            'kg_total_chunks': self.kg_total_chunks,
+            'kg_processed_chunks': self.kg_processed_chunks,
+            'kg_error_message': self.kg_error_message
         }
 
 

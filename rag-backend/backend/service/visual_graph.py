@@ -2,6 +2,7 @@ from typing import Optional
 import logging
 from backend.param.visual_graph import KnowledgeGraph
 from backend.rag.storage.lightrag_storage import LightRAGStorage
+from backend.service.graph_filter import GraphFilterService
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ class VisualGraphService:
         self.lightrag_storage = LightRAGStorage(workspace=collection_id)
         self.lightrag = None  # 将在 _ensure_lightrag_initialized 中初始化
         
+        # 初始化图过滤服务
+        self.filter_service = GraphFilterService()
+        
         logger.info(f"VisualGraphService initialized with collection_id={collection_id}, max_graph_nodes={max_graph_nodes}")
     
     async def _ensure_lightrag_initialized(self):
@@ -39,7 +43,9 @@ class VisualGraphService:
         self,
         node_label: str,
         max_depth: int = 3,
-        max_nodes: Optional[int] = None
+        max_nodes: Optional[int] = None,
+        enable_filter: bool = True,
+        min_edge_count: int = 0
     ) -> KnowledgeGraph:
         """
         获取知识图谱数据
@@ -48,6 +54,8 @@ class VisualGraphService:
             node_label: 节点标签，用于筛选起始节点
             max_depth: 最大深度，默认为3
             max_nodes: 最大节点数量，如果为None则使用实例的max_graph_nodes
+            enable_filter: 是否启用节点过滤，默认为True
+            min_edge_count: 最小连接数过滤，默认为0（不过滤）
             
         Returns:
             KnowledgeGraph: 包含节点、边和截断标志的知识图谱对象
@@ -66,7 +74,7 @@ class VisualGraphService:
             elif max_nodes < 1:
                 raise ValueError("max_nodes must be at least 1")
             
-            logger.info(f"Getting knowledge graph: node_label={node_label}, max_depth={max_depth}, max_nodes={max_nodes}")
+            logger.info(f"Getting knowledge graph: node_label={node_label}, max_depth={max_depth}, max_nodes={max_nodes}, enable_filter={enable_filter}, min_edge_count={min_edge_count}")
             
             # 确保 LightRAG 实例已初始化
             await self._ensure_lightrag_initialized()
@@ -79,6 +87,15 @@ class VisualGraphService:
             )
             
             logger.info(f"Knowledge graph retrieved: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} edges, truncated={knowledge_graph.is_truncated}")
+            
+            # 应用节点过滤
+            if enable_filter:
+                self.filter_service.config.enabled = True
+                knowledge_graph = self.filter_service.filter_graph(
+                    knowledge_graph,
+                    min_edge_count=min_edge_count
+                )
+                logger.info(f"After filtering: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} edges")
             
             return knowledge_graph
             

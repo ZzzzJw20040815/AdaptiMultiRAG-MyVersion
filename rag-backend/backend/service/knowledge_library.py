@@ -349,3 +349,57 @@ async def delete_document(document_id: int, user_id: str) -> Response:
     except Exception as e:
         logger.error(f"删除文档失败: {str(e)}")
         return Response.error(f"删除文档失败: {str(e)}")
+
+
+async def update_document_name_by_url(collection_id: str, url: str, new_name: str) -> bool:
+    """
+    根据 URL 更新文档名称（内部服务调用）
+    
+    用于在自动提取论文标题后更新数据库中的文档名称
+    
+    Args:
+        collection_id: 知识库的 collection_id
+        url: 文档的 URL（用于定位文档）
+        new_name: 新的文档名称（提取的论文标题）
+        
+    Returns:
+        bool: 是否更新成功
+    """
+    try:
+        db = DatabaseFactory.create_session()
+        
+        try:
+            # 1. 根据 collection_id 查找知识库
+            library = db.query(KnowledgeLibrary).filter(
+                KnowledgeLibrary.collection_id == collection_id,
+                KnowledgeLibrary.is_active == True
+            ).first()
+            
+            if not library:
+                logger.warning(f"未找到 collection_id={collection_id} 的知识库")
+                return False
+            
+            # 2. 根据 library_id 和 url 查找文档
+            document = db.query(KnowledgeDocument).filter(
+                KnowledgeDocument.library_id == library.id,
+                KnowledgeDocument.url == url
+            ).first()
+            
+            if not document:
+                logger.warning(f"未找到 url={url} 的文档")
+                return False
+            
+            # 3. 更新文档名称
+            old_name = document.name
+            document.name = new_name
+            db.commit()
+            
+            logger.info(f"成功更新文档名称: '{old_name}' -> '{new_name}'")
+            return True
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"更新文档名称失败: {str(e)}")
+        return False

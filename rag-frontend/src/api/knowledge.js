@@ -9,7 +9,7 @@ import { httpClient } from './config.js'
  * 知识库API服务类
  */
 class KnowledgeLibraryAPI {
-  
+
   /**
    * 获取用户的知识库列表
    * @returns {Promise} API响应
@@ -169,12 +169,12 @@ class KnowledgeLibraryAPI {
           'Content-Type': 'application/octet-stream'
         }
       })
-      
+
       if (!response.ok) {
         const errorText = await response.text().catch(() => '')
         throw new Error(`上传失败: ${response.status} ${response.statusText} - ${errorText}`)
       }
-      
+
       return {
         success: true,
         url: uploadUrl.split('?')[0] // 移除查询参数，返回文件URL
@@ -204,15 +204,57 @@ class KnowledgeLibraryAPI {
   }
 
   /**
+   * 触发 OSS 文件处理
+   * @param {Object} fileData - 文件数据
+   * @param {string} fileData.url - OSS 文件URL
+   * @param {string} fileData.collection_id - 集合ID
+   * @param {string} [fileData.title] - 文件标题
+   * @returns {Promise} API响应
+   */
+  async loadDocument(fileData) {
+    try {
+      const response = await httpClient.post('/api/crawl/load-document', fileData)
+      return response
+    } catch (error) {
+      console.error('触发文件处理失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 更新文档名称
+   * @param {number} documentId - 文档ID
+   * @param {string} newName - 新的文档名称
+   * @returns {Promise} API响应
+   */
+  async updateDocumentName(documentId, newName) {
+    try {
+      const response = await httpClient.put(`/api/knowledge/documents/${documentId}`, {
+        name: newName
+      })
+      return response
+    } catch (error) {
+      console.error('更新文档名称失败:', error)
+      throw error
+    }
+  }
+
+  /**
    * 获取知识图谱数据
    * @param {string} collectionId - 集合ID
    * @param {string} label - 标签过滤器
+   * @param {Object} options - 过滤选项
+   * @param {boolean} [options.enableFilter=true] - 是否启用节点过滤
+   * @param {number} [options.minEdgeCount=0] - 最小连接数过滤
    * @returns {Promise} API响应
    */
-  async getKnowledgeGraph(collectionId, label = '*') {
+  async getKnowledgeGraph(collectionId, label = '*', options = {}) {
     try {
+      const { enableFilter = true, minEdgeCount = 0 } = options
       const response = await httpClient.get(`/api/visual/graph/${collectionId}`, {
-        label: label
+        label: label,
+        enable_filter: enableFilter,
+        min_edge_count: minEdgeCount
       })
       return response
     } catch (error) {

@@ -1,13 +1,40 @@
 <template>
-  <div class="h-screen flex bg-amber-50/30">
+  <div class="h-screen flex bg-amber-50/30 overflow-hidden">
     <!-- 左侧边栏 -->
-    <div class="w-80 bg-white border-r border-gray-100 flex flex-col shadow-sm">
+    <div 
+      :class="[
+        'bg-white border-r border-gray-100 flex flex-col shadow-sm transition-all duration-300 relative',
+        sidebarCollapsed ? 'w-16' : 'w-80'
+      ]"
+    >
+      <!-- 折叠/展开按钮 -->
+      <button
+        @click="sidebarCollapsed = !sidebarCollapsed"
+        class="absolute -right-3 top-6 z-20 w-6 h-6 bg-white border border-gray-200 rounded-full shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors"
+        :title="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
+      >
+        <svg
+          class="w-3 h-3 text-gray-600 transition-transform duration-300"
+          :class="{ 'rotate-180': sidebarCollapsed }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M15 19l-7-7 7-7"
+          />
+        </svg>
+      </button>
+
       <!-- 头部 -->
       <div class="p-4 border-b border-gray-100">
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center space-x-2">
             <div
-              class="w-7 h-7 rounded-lg bg-gray-900 flex items-center justify-center"
+              class="w-7 h-7 rounded-lg bg-gray-900 flex items-center justify-center flex-shrink-0"
             >
               <svg
                 class="w-4 h-4 text-white"
@@ -23,9 +50,10 @@
                 />
               </svg>
             </div>
-            <h1 class="text-lg font-medium text-gray-900">AdaptiMultiRAG</h1>
+            <h1 v-if="!sidebarCollapsed" class="text-lg font-medium text-gray-900 whitespace-nowrap overflow-hidden">AdaptiMultiRAG</h1>
           </div>
           <button
+            v-if="!sidebarCollapsed"
             @click="logout"
             class="text-gray-500 hover:text-gray-900 p-2 rounded-lg hover:bg-gray-50 transition-colors"
           >
@@ -46,10 +74,14 @@
         </div>
         <button
           @click="createNewConversation"
-          class="w-full bg-gray-900 text-white py-2.5 px-4 rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium"
+          :class="[
+            'w-full bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center font-medium',
+            sidebarCollapsed ? 'p-2.5' : 'py-2.5 px-4'
+          ]"
+          :title="sidebarCollapsed ? '新建对话' : ''"
         >
           <svg
-            class="w-4 h-4 mr-2"
+            :class="sidebarCollapsed ? 'w-5 h-5' : 'w-4 h-4 mr-2'"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -61,7 +93,7 @@
               d="M12 4v16m8-8H4"
             />
           </svg>
-          新建对话
+          <span v-if="!sidebarCollapsed">新建对话</span>
         </button>
       </div>
 
@@ -79,14 +111,23 @@
               'hover:bg-gray-50 border border-transparent':
                 currentConversation?.id !== conversation.id,
             }"
+            :title="sidebarCollapsed ? conversation.title : ''"
           >
             <div class="flex items-center justify-between">
               <div class="flex-1 min-w-0">
-                <h3 class="text-sm font-normal text-gray-900 truncate">
+                <!-- 折叠时显示对话图标 -->
+                <div v-if="sidebarCollapsed" class="flex justify-center">
+                  <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                </div>
+                <!-- 展开时显示标题 -->
+                <h3 v-else class="text-sm font-normal text-gray-900 truncate">
                   {{ conversation.title }}
                 </h3>
               </div>
               <button
+                v-if="!sidebarCollapsed"
                 @click.stop="deleteConversation(conversation.id)"
                 class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-900 p-1 rounded transition-all"
               >
@@ -113,12 +154,20 @@
       <div class="p-4 border-t border-gray-100">
         <router-link
           to="/document-library"
-          class="block text-center py-2 px-3 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors font-normal"
+          :class="[
+            'block text-center text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors font-normal',
+            sidebarCollapsed ? 'p-2' : 'py-2 px-3'
+          ]"
+          :title="sidebarCollapsed ? '文档库管理' : ''"
         >
-          文档库管理
+          <svg v-if="sidebarCollapsed" class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+          </svg>
+          <span v-else>文档库管理</span>
         </router-link>
       </div>
     </div>
+
 
     <!-- 主聊天区域 -->
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -192,44 +241,57 @@
 
         <div
           v-else
-          v-for="message in messages"
-          :key="message.id"
-          class="flex gap-4"
-          :class="{
-            'justify-end': message.role === 'user',
-            '': message.role === 'assistant' || message.role === 'node_update',
-          }"
+          v-for="item in groupedMessages"
+          :key="item.id"
+          class="mb-4"
         >
-          <!-- 节点更新消息的可折叠渲染 -->
-          <div v-if="message.role === 'node_update'" class="w-full max-w-3xl">
-            <details class="node-update-details">
-              <summary class="node-update-summary">
-                <div class="node-update-caret">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </div>
-                <div class="node-update-title">
-                  <p>{{ getNodeDisplayName(message.node_name) }}</p>
-                </div>
-              </summary>
-              <div class="node-update-content">
-                <div class="node-update-content-text">
-                  {{ message.content }}
-                </div>
+          <!-- 用户消息 -->
+          <template v-if="item.type === 'user'">
+            <div class="flex gap-4 justify-end">
+              <div
+                class="px-4 py-2 rounded-lg bg-gray-900 text-white max-w-xs lg:max-w-md"
+              >
+                <p class="text-sm whitespace-pre-wrap">{{ item.message.content }}</p>
               </div>
-            </details>
-          </div>
+            </div>
+          </template>
 
-          <!-- 普通消息渲染 -->
-          <template v-else>
-            <!-- 助手消息 -->
-            <template v-if="message.role === 'assistant'">
+          <!-- 对话轮次（包含 node_updates + assistant 答案） -->
+          <template v-else-if="item.type === 'turn'">
+            <!-- 节点更新消息折叠区（在答案上方） -->
+            <div v-if="item.nodeUpdates.length > 0" class="mb-3">
+              <div
+                v-for="nodeUpdate in item.nodeUpdates"
+                :key="nodeUpdate.id"
+                class="w-full max-w-3xl"
+              >
+                <details class="node-update-details">
+                  <summary class="node-update-summary">
+                    <div class="node-update-caret">
+                      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </div>
+                    <div class="node-update-title">
+                      <p>{{ getNodeDisplayName(nodeUpdate.node_name) }}</p>
+                    </div>
+                  </summary>
+                  <div class="node-update-content">
+                    <div class="node-update-content-text">
+                      {{ nodeUpdate.content }}
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <!-- AI 助手答案 -->
+            <div v-if="item.assistant" class="flex gap-4">
               <!-- 头像 -->
               <div class="flex-shrink-0">
                 <div
@@ -243,7 +305,7 @@
               <div class="flex-1 max-w-3xl">
                 <div
                   class="text-sm text-gray-700 prose prose-sm max-w-none"
-                  v-html="renderMarkdown(message.content)"
+                  v-html="renderMarkdown(item.assistant.content)"
                 ></div>
 
                 <!-- 操作按钮 -->
@@ -269,6 +331,7 @@
                   <button
                     class="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 transition-colors"
                     title="复制"
+                    @click="copyToClipboard(item.assistant.content)"
                   >
                     <svg
                       class="w-4 h-4"
@@ -358,18 +421,10 @@
                   </button>
                 </div>
               </div>
-            </template>
-
-            <!-- 用户消息 -->
-            <template v-else>
-              <div
-                class="px-4 py-2 rounded-lg bg-gray-900 text-white max-w-xs lg:max-w-md"
-              >
-                <p class="text-sm whitespace-pre-wrap">{{ message.content }}</p>
-              </div>
-            </template>
+            </div>
           </template>
         </div>
+
       </div>
 
       <!-- 输入区域 -->
@@ -392,8 +447,29 @@
             v-else
             class="px-2 py-1 bg-gray-50 text-gray-500 rounded border border-gray-200 font-light"
           >
-            未选择知识库
+                      未选择知识库
           </span>
+        </div>
+
+        <!-- 文献快速选择标签 (只在知识库有效且有文献时显示) -->
+        <div v-if="selectedLibrary && getSelectedLibraryName(selectedLibrary) !== '未知知识库' && selectedLibraryDocuments.length > 0" class="mb-3">
+          <div class="flex items-start gap-2">
+            <span class="text-xs text-gray-500 whitespace-nowrap pt-1">📄 插入文献:</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="doc in selectedLibraryDocuments"
+                :key="doc.id"
+                @click="insertDocumentName(doc.name)"
+                type="button"
+                class="px-2.5 py-1 text-xs bg-blue-50 text-blue-700 rounded-full 
+                       hover:bg-blue-100 border border-blue-200 transition-colors
+                       max-w-[200px] truncate"
+                :title="doc.name"
+              >
+                {{ truncateText(doc.name, 25) }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <form @submit.prevent="sendMessage" class="flex space-x-4">
@@ -425,13 +501,16 @@
             </svg>
           </button>
 
-          <input
+          <textarea
+            ref="messageInputRef"
             v-model="newMessage"
-            type="text"
             placeholder="输入您的消息..."
-            class="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white"
+            rows="1"
+            class="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white resize-none overflow-hidden min-h-[42px] max-h-[200px]"
             :disabled="streaming"
-          />
+            @input="adjustTextareaHeight"
+            @keydown="handleKeydown"
+          ></textarea>
           <button
             type="submit"
             :disabled="!newMessage.trim() || streaming"
@@ -882,6 +961,9 @@ import BaseModal from "@/components/BaseModal.vue";
 import BaseButton from "@/components/BaseButton.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import mermaid from "mermaid";
+import texmath from "markdown-it-texmath";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
 // 初始化markdown渲染器
 const md = new MarkdownIt({
@@ -889,6 +971,10 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   breaks: true,
+}).use(texmath, {
+  engine: katex,
+  delimiters: "dollars",  // 支持 $...$ 和 $$...$$ 语法
+  katexOptions: { macros: { "\\RR": "\\mathbb{R}" } }
 });
 
 const router = useRouter();
@@ -897,13 +983,16 @@ const chatStore = useChatStore();
 
 const newMessage = ref("");
 const messagesContainer = ref(null);
+const messageInputRef = ref(null); // 输入框引用
 const mermaidContainer = ref(null); // Mermaid容器引用
+const sidebarCollapsed = ref(false); // 侧边栏折叠状态
 const currentExecutingNode = ref(""); // 当前执行的节点
 const ragMode = ref("auto"); // 改为单选
 const selectedLibrary = ref(""); // 改为单选
 const knowledgeLibraries = ref([]); // 知识库列表
 const librariesLoading = ref(false); // 知识库加载状态
-const maxRetrievalDocs = ref(3); // 最大检索文档数量
+const selectedLibraryDocuments = ref([]); // 选中知识库的文献列表
+const maxRetrievalDocs = ref(5); // 最大检索文档数量
 const systemPrompt = ref(
   "你是一个专业的RAG助手，能够基于检索到的信息提供准确的回答。"
 ); // 系统提示词
@@ -962,6 +1051,75 @@ const currentConversation = computed(() => chatStore.currentConversation);
 const messages = computed(() => chatStore.messages);
 const streaming = computed(() => chatStore.streaming);
 const loading = computed(() => chatStore.loading);
+
+// 将消息分组为用户消息和对话轮次（node_updates + assistant）
+// 这样可以确保节点更新消息显示在答案上方
+const groupedMessages = computed(() => {
+  const result = [];
+  const msgs = messages.value;
+  
+  let i = 0;
+  while (i < msgs.length) {
+    const msg = msgs[i];
+    
+    if (msg.role === 'user') {
+      // 用户消息单独处理
+      result.push({
+        id: `user-${msg.id}`,
+        type: 'user',
+        message: msg
+      });
+      i++;
+    } else if (msg.role === 'node_update') {
+      // 收集连续的 node_update 消息，直到遇到 assistant 消息
+      const nodeUpdates = [];
+      while (i < msgs.length && msgs[i].role === 'node_update') {
+        nodeUpdates.push(msgs[i]);
+        i++;
+      }
+      
+      // 查找后续的 assistant 消息
+      let assistant = null;
+      if (i < msgs.length && msgs[i].role === 'assistant') {
+        assistant = msgs[i];
+        i++;
+      }
+      
+      // 创建对话轮次
+      result.push({
+        id: `turn-${nodeUpdates[0]?.id || Date.now()}`,
+        type: 'turn',
+        nodeUpdates,
+        assistant
+      });
+    } else if (msg.role === 'assistant') {
+      // 单独的 assistant 消息（没有前置的 node_update）
+      result.push({
+        id: `turn-${msg.id}`,
+        type: 'turn',
+        nodeUpdates: [],
+        assistant: msg
+      });
+      i++;
+    } else {
+      // 其他类型消息跳过
+      i++;
+    }
+  }
+  
+  return result;
+});
+
+// 复制内容到剪贴板
+const copyToClipboard = async (content) => {
+  try {
+    await navigator.clipboard.writeText(content);
+    ElMessage.success('已复制到剪贴板');
+  } catch (err) {
+    console.error('复制失败:', err);
+    ElMessage.error('复制失败');
+  }
+};
 
 // 方法
 const logout = () => {
@@ -1157,6 +1315,7 @@ const sendMessage = async () => {
 
   const message = newMessage.value.trim();
   newMessage.value = "";
+  resetTextareaHeight(); // 重置输入框高度
 
   try {
     console.log("📤 准备发送消息");
@@ -1202,7 +1361,57 @@ const scrollToBottom = () => {
 
 // 渲染markdown内容
 const renderMarkdown = (content) => {
-  return md.render(content);
+  // 预处理：修复 LaTeX 公式格式
+  // markdown-it-texmath 不支持 `$ P $` 这种带空格的格式，需要转换为 `$P$`
+  let processedContent = content;
+  
+  // 处理行内公式：`$ ... $` -> `$...$`（移除美元符号内侧的空格）
+  // 匹配 $ 后有空格，或 $ 前有空格的情况
+  processedContent = processedContent.replace(
+    /\$\s+([^$]+?)\s+\$/g, 
+    (match, inner) => `$${inner.trim()}$`
+  );
+  
+  // 处理只有一侧有空格的情况
+  processedContent = processedContent.replace(
+    /\$\s+([^$]+?)\$/g, 
+    (match, inner) => `$${inner.trim()}$`
+  );
+  processedContent = processedContent.replace(
+    /\$([^$]+?)\s+\$/g, 
+    (match, inner) => `$${inner.trim()}$`
+  );
+  
+  // 解析参考文献部分，建立编号到文献名的映射
+  // 匹配格式如: [1] 文献名称 或 [1] 文献名称
+  const citationMap = {};
+  const refPattern = /\[(\d+)\]\s*([^\n\[]+)/g;
+  let refMatch;
+  while ((refMatch = refPattern.exec(content)) !== null) {
+    const num = refMatch[1];
+    const name = refMatch[2].trim();
+    // 只保存非空且长度合理的文献名（避免匹配到正文中的引用）
+    if (name.length > 5 && name.length < 200) {
+      citationMap[num] = name;
+    }
+  }
+  
+  // 渲染 Markdown
+  let html = md.render(processedContent);
+  
+  // 后处理：为引用标记 [1] [2] 添加样式和tooltip
+  // 使用解析到的文献名作为tooltip，如果没有则显示"引用 N"
+  html = html.replace(
+    /\[(\d+)\]/g,
+    (match, num) => {
+      const docName = citationMap[num] || `引用 ${num}`;
+      // 转义引号以防止HTML属性问题
+      const escapedDocName = docName.replace(/"/g, '&quot;');
+      return `<span class="citation-badge" title="${escapedDocName}">[${num}]</span>`;
+    }
+  );
+  
+  return html;
 };
 
 // 获取节点显示名称
@@ -1260,6 +1469,132 @@ const getSelectedLibraryCollectionId = (libraryId) => {
   const library = knowledgeLibraries.value.find((lib) => lib.id === libraryId);
   return library ? library.collection_id : null;
 };
+
+// 加载选中知识库的文献列表
+const loadSelectedLibraryDocuments = async (libraryId) => {
+  if (!libraryId) {
+    selectedLibraryDocuments.value = [];
+    return;
+  }
+  
+  try {
+    const response = await knowledgeAPI.getLibraryDetail(libraryId);
+    if (response.status === 200 && response.data) {
+      selectedLibraryDocuments.value = response.data.documents || [];
+      console.log(`📚 已加载知识库文献列表: ${selectedLibraryDocuments.value.length} 个文献`);
+    } else {
+      selectedLibraryDocuments.value = [];
+    }
+  } catch (error) {
+      console.error("加载知识库文献列表失败:", error);
+    selectedLibraryDocuments.value = [];
+  }
+};
+
+// 点击标签插入文献名称到输入框（支持撤销）
+const insertDocumentName = (name) => {
+  const textarea = messageInputRef.value;
+  if (!textarea) {
+    // 降级方案：如果无法获取 textarea 引用，直接修改
+    if (newMessage.value) {
+      newMessage.value = newMessage.value.trimEnd() + ' ' + name + ' ';
+    } else {
+      newMessage.value = name + ' ';
+    }
+    return;
+  }
+
+  // 聚焦到输入框
+  textarea.focus();
+  
+  // 准备插入的文本
+  const textToInsert = newMessage.value ? ' ' + name + ' ' : name + ' ';
+  
+  // 将光标移到末尾
+  const len = textarea.value.length;
+  textarea.setSelectionRange(len, len);
+  
+  // 使用 execCommand 插入文本（支持浏览器原生撤销）
+  // 注意：execCommand 虽然已被标记为废弃，但在大多数浏览器中仍然有效
+  // 且这是目前唯一能支持原生撤销的方法
+  const success = document.execCommand('insertText', false, textToInsert);
+  
+  if (!success) {
+    // 某些浏览器可能不支持 execCommand('insertText')
+    // 降级方案：使用 InputEvent
+    try {
+      const inputEvent = new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: textToInsert
+      });
+      // 手动更新值并触发事件
+      textarea.value = textarea.value.substring(0, len) + textToInsert;
+      newMessage.value = textarea.value;
+      textarea.dispatchEvent(inputEvent);
+    } catch (e) {
+      // 最终降级：直接修改
+      newMessage.value = newMessage.value.trimEnd() + textToInsert;
+    }
+  } else {
+    // execCommand 成功后，同步 v-model 值
+    newMessage.value = textarea.value;
+  }
+  
+  // 调整高度
+  nextTick(() => {
+    adjustTextareaHeight({ target: textarea });
+  });
+};
+
+// 调整 textarea 高度以适应内容
+const adjustTextareaHeight = (event) => {
+  const textarea = event.target;
+  if (!textarea) return;
+  
+  // 重置高度以获取正确的 scrollHeight
+  textarea.style.height = 'auto';
+  // 设置新高度，限制最大高度
+  const newHeight = Math.min(textarea.scrollHeight, 200);
+  textarea.style.height = newHeight + 'px';
+  
+  // 如果内容超过最大高度，显示滚动条
+  if (textarea.scrollHeight > 200) {
+    textarea.style.overflowY = 'auto';
+  } else {
+    textarea.style.overflowY = 'hidden';
+  }
+};
+
+// 重置 textarea 高度（发送消息后调用）
+const resetTextareaHeight = () => {
+  const textarea = messageInputRef.value;
+  if (textarea) {
+    textarea.style.height = '42px';
+    textarea.style.overflowY = 'hidden';
+  }
+};
+
+// 处理键盘事件：Enter 发送，Shift+Enter 换行
+const handleKeydown = (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
+};
+
+// 截断过长的文献名称
+const truncateText = (text, maxLength) => {
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '...';
+};
+
+// 监听知识库选择变化，加载文献列表
+watch(selectedLibrary, (newLibraryId) => {
+  loadSelectedLibraryDocuments(newLibraryId);
+});
 
 // 监听点击外部关闭下拉框
 onMounted(async () => {
@@ -1458,7 +1793,7 @@ const cancelSettingsModal = () => {
 const resetSettings = () => {
   ragMode.value = "auto";
   selectedLibrary.value = "";
-  maxRetrievalDocs.value = 3;
+  maxRetrievalDocs.value = 5;
   systemPrompt.value =
     "你是一个专业的RAG助手，能够基于检索到的信息提供准确的回答。";
 };
@@ -1629,5 +1964,24 @@ const restorePanelWidth = () => {
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* 引用标记样式 - 使用 :deep() 穿透 v-html 动态内容 */
+:deep(.citation-badge) {
+  display: inline-block;
+  color: #2563eb;
+  font-size: 0.85em;
+  font-weight: 600;
+  background: #eff6ff;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin: 0 1px;
+  cursor: default;
+  transition: all 0.15s ease;
+}
+
+:deep(.citation-badge:hover) {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 </style>

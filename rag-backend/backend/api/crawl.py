@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from backend.param.common import Response
-from backend.service.crawl import get_crawl_status, get_all_crawl_status
+from backend.service.crawl import get_crawl_status, get_all_crawl_status, process_oss_file
 from backend.config.log import get_logger
 from typing import Optional
 from backend.param.crawl import CrawlRequest, UploadDocRequest
@@ -60,7 +60,7 @@ async def get_oss_doc_and_store(request: CrawlRequest) -> Response:
         logger.info(f"触发从OSS获取文档任务: {request.url}")
         
         # 初始化集合并存储数据,走异步调用非等待，直接返回
-        asyncio.create_task(initialize_collection_and_store(request))
+        asyncio.create_task(process_oss_file(request))
         
         return Response.success_with_msg({
             "collection_id": request.collection_id,

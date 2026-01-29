@@ -346,6 +346,59 @@ class MilvusStorage:
             return self.vector_store.similarity_search_with_score(query, k=k, **kwargs)
         except Exception as e:
             raise Exception(f"带分数混合检索失败: {str(e)}")
+    
+    async def get_all_chunks(self, limit: int = 10000) -> List[Document]:
+        """获取 collection 中的所有分块数据
+        
+        用于后续传递给 LightRAG 构建知识图谱。
+        
+        Args:
+            limit: 最大返回数量，默认 10000
+            
+        Returns:
+            List[Document]: 所有分块文档列表
+        """
+        try:
+            if not self.vector_store:
+                raise ValueError("向量存储未初始化")
+            
+            client = self.vector_store.client
+            
+            # 检查 collection 是否存在
+            if not client.has_collection(self.collection_name):
+                return []
+            
+            # 获取 collection 的 schema 来确定字段名
+            collection_info = client.describe_collection(self.collection_name)
+            field_names = [field['name'] for field in collection_info.get('fields', [])]
+            
+            # 确定文本字段名（可能是 'text' 或 'text_content'）
+            text_field = 'text' if 'text' in field_names else 'text_content'
+            
+            # 只查询文本字段
+            output_fields = [text_field]
+            
+            # 使用 Milvus 客户端查询所有数据
+            results = client.query(
+                collection_name=self.collection_name,
+                filter="",  # 无过滤条件，获取所有
+                output_fields=output_fields,
+                limit=limit
+            )
+            
+            documents = []
+            for item in results:
+                text = item.get(text_field, "")
+                if text:
+                    documents.append(Document(
+                        page_content=text,
+                        metadata={}
+                    ))
+            
+            return documents
+            
+        except Exception as e:
+            raise Exception(f"获取分块数据失败: {str(e)}")
 
 
 
