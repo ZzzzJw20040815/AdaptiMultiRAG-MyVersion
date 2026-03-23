@@ -38,7 +38,7 @@ class RAGContext:
         },
     )
     max_retrieval_docs: int = field(
-        default=3,
+        default=5,
         metadata={
             "description": "最大检索文档数量。"
             "限制每次检索返回的文档数量。",

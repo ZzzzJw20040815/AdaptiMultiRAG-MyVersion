@@ -18,6 +18,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      // 代理知识图谱任务 API
+      '/kg-task': {
+        target: 'http://localhost:8888',
+        changeOrigin: true,
+        secure: false
       }
     }
   }

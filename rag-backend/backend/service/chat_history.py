@@ -171,3 +171,53 @@ def delete_conversation_messages(conversation_id: str) -> bool:
     finally:
         if db:
             db.close()
+
+
+def update_last_assistant_extra_data(
+    conversation_id: str,
+    updates: dict
+) -> bool:
+    """
+    更新对话中最后一条 assistant 消息的 extra_data（合并更新）
+    
+    用于在 assistant 消息已保存后，追加 citation_metadata 等数据。
+    
+    Args:
+        conversation_id: 对话ID
+        updates: 要合并到 extra_data 中的字典
+        
+    Returns:
+        bool: 更新是否成功
+    """
+    db = None
+    try:
+        db = DatabaseFactory.create_session()
+        
+        # 找到该对话最后一条 assistant 消息
+        last_assistant = db.query(ChatHistory).filter(
+            ChatHistory.conversation_id == conversation_id,
+            ChatHistory.role == "assistant"
+        ).order_by(ChatHistory.id.desc()).first()
+        
+        if not last_assistant:
+            logger.warning(f"未找到对话 {conversation_id} 的 assistant 消息")
+            return False
+        
+        # 合并 extra_data
+        existing = last_assistant.extra_data or {}
+        existing.update(updates)
+        last_assistant.extra_data = existing
+        
+        db.commit()
+        logger.info(f"成功更新 assistant 消息 extra_data: conversation_id={conversation_id}, keys={list(updates.keys())}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"更新 assistant extra_data 失败: {str(e)}")
+        if db:
+            db.rollback()
+        return False
+        
+    finally:
+        if db:
+            db.close()

@@ -137,6 +137,53 @@ class LightRAGStorage:
         """
         for text in texts:
             await self.insert_text(text)
+    
+    async def insert_texts_with_control(
+        self, 
+        texts: List[str], 
+        collection_id: str,
+        start_index: int = 0
+    ) -> Dict[str, Any]:
+        """带控制的批量插入文本（支持暂停/取消）
+
+        Args:
+            texts: 文本列表
+            collection_id: 集合ID，用于任务管理
+            start_index: 开始索引（用于恢复）
+
+        Returns:
+            Dict 包含状态和已处理数量
+        """
+        from backend.service.kg_task_service import kg_task_manager, KGTaskStatus
+        
+        if self.rag is None:
+            await self.initialize()
+        
+        total = len(texts)
+        processed = start_index
+        
+        for i in range(start_index, total):
+            # 检查取消信号
+            if kg_task_manager.should_cancel(collection_id):
+                kg_task_manager.mark_cancelled(collection_id)
+                return {"status": "cancelled", "processed": processed}
+            
+            # 检查暂停信号
+            if kg_task_manager.should_pause(collection_id):
+                kg_task_manager.mark_paused(collection_id)
+                return {"status": "paused", "processed": processed}
+            
+            try:
+                await self.rag.ainsert(texts[i])
+                processed = i + 1
+                kg_task_manager.update_progress(collection_id, processed)
+            except Exception as e:
+                logger.error(f"插入分块 {i+1}/{total} 失败: {e}")
+                kg_task_manager.mark_failed(collection_id, str(e))
+                return {"status": "failed", "processed": processed, "error": str(e)}
+        
+        kg_task_manager.mark_completed(collection_id)
+        return {"status": "completed", "processed": processed}
 
     async def query(
         self,

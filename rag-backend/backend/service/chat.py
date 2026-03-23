@@ -12,6 +12,7 @@ from backend.param.chat import ChatRequest
 from backend.config.log import get_logger
 from backend.service import conversation as conversation_service
 from backend.service.chat_history import save_chat_message
+from backend.service.citation_service import get_all_documents_metadata
 
 logger = get_logger(__name__)
 
@@ -167,7 +168,7 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
             session_id=session_id,
             user_id=user_id,
             retrieval_mode=chat_request.retrieval_mode,
-            max_retrieval_docs=chat_request.max_retrieval_docs or 3,
+            max_retrieval_docs=chat_request.max_retrieval_docs or 5,
             system_prompt=chat_request.system_prompt or "你是一个专业的RAG助手，能够基于检索到的信息提供准确的回答。"
         )
         
@@ -198,7 +199,10 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
         
         # 调用 RAGGraph stream 方法
         logger.info("调用 RAGGraph.stream 方法...")
-        
+
+        # PR-2 阶段D改造: snippet_map 从 generate_answer 节点的 state 中获取
+        snippet_map = {}
+
         try:
             # 使用 stream_mode="messages" 进行流式处理
             async for mode,chunk in rag_graph.astream(input_data, context, stream_mode="mix"):
@@ -208,26 +212,40 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
                     node_output = chunk[node_name]
                     logger.info(f"（流式输出）节点名称: {node_name}")
                     #logger.info(f"节点输出: {node_output}")
-                    
+
                     # 根据节点类型处理content
                     content = ""
                     if node_name == "check_retrieval_needed":
-                        content = f"节点名称为{node_name}，LLM判断是否需要检索结果为{node_output['need_retrieval']}，理由为{node_output['need_retrieval_reason']}，提取原始问题为{node_output['original_question']}"
+                        need_retrieval = node_output.get('need_retrieval', 'unknown')
+                        need_retrieval_reason = node_output.get('need_retrieval_reason', '未提供理由')
+                        original_question = node_output.get('original_question', '')
+                        content = f"节点名称为{node_name}，LLM判断是否需要检索结果为{need_retrieval}，理由为{need_retrieval_reason}，提取原始问题为{original_question}"
                     elif node_name == "expand_subquestions":
-                        extraquestion = "\n".join([f"{i+1}. {q}" for i, q in enumerate(node_output['subquestions'])])
+                        subquestions = node_output.get('subquestions', [])
+                        extraquestion = "\n".join([f"{i+1}. {q}" for i, q in enumerate(subquestions)])
                         content = f"节点名称为{node_name}，扩展子问题为{extraquestion}"
                     elif node_name == "classify_question_type":
-                        content = f"节点名称为{node_name}，LLM判断检索模式为{node_output['retrieval_mode']}，理由为{node_output['retrieval_mode_reason']}"
+                        retrieval_mode = node_output.get('retrieval_mode', 'unknown')
+                        retrieval_mode_reason = node_output.get('retrieval_mode_reason', '未提供理由')
+                        content = f"节点名称为{node_name}，LLM判断检索模式为{retrieval_mode}，理由为{retrieval_mode_reason}"
                     elif node_name == "vector_db_retrieval":
-                        vectordoc = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(node_output['vector_db_results'])])
+                        vector_results = node_output.get('vector_db_results', [])
+                        vectordoc = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(vector_results)])
                         content = f"节点名称为{node_name}，向量检索到的文档为{vectordoc}"
                     elif node_name == "graph_db_retrieval":
-                        graphdoc = "\n".join([f"{i+1}. {doc}" for i, doc in enumerate(node_output['graph_db_results'])])
+                        graph_results = node_output.get('graph_db_results', [])
+                        graphdoc = "\n".join([f"{i+1}. {doc}" for i, doc in enumerate(graph_results)])
                         content = f"节点名称为{node_name}，图检索到的文档为{graphdoc}"
                     elif node_name == "generate_answer" or node_name == "direct_answer":
                         content = f"节点名称为{node_name}，回答完毕"
-                        # 存储messages类型的消息到数据库
+                        # PR-2 阶段D改造: 从 state 中获取 snippet_map
+                        snippet_map = node_output.get('snippet_map', {})
+                        logger.info(f"获取到 snippet_map，包含 {len(snippet_map)} 个片段")
+                        # 存储messages类型的消息到数据库（包含 snippet_map 和 citation_metadata 用于持久化）
                         extra_data = {"node_name": node_name}
+                        # PR-2 持久化: 将 snippet_map 存入 extra_data
+                        if snippet_map:
+                            extra_data["snippet_map"] = snippet_map
                         
                         latest_message = node_output['messages'][-1]  # 获取最新的一条消息
                         message_content = latest_message.content if hasattr(latest_message, 'content') else str(latest_message)
@@ -261,7 +279,13 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
                     
                 if mode =="messages":
                     chunkmessage,metadata=chunk
-                    if chunkmessage.response_metadata and chunkmessage.response_metadata["finish_reason"] == "stop":
+                    # 只转发来自答案生成节点的消息，过滤掉其他节点的LLM输出
+                    langgraph_node = metadata.get("langgraph_node", "")
+                    if langgraph_node not in ("generate_answer", "direct_answer"):
+                        # 非答案节点的消息（如 classify_question_type 的 JSON 输出）不发送给用户
+                        continue
+                    
+                    if chunkmessage.response_metadata and chunkmessage.response_metadata.get("finish_reason") == "stop":
                         yield {
                         "type": "token",
                         "session_id": session_id,
@@ -283,6 +307,45 @@ async def chat_stream(chat_request: ChatRequest) -> AsyncGenerator[Dict[str, Any
                 "node_name": "end",
                 "content": end_content
             }
+
+            # PR-2: 发送引用元数据给前端
+            serializable_metadata = {}
+            try:
+                citation_metadata = get_all_documents_metadata(collection_id, include_aliases=False)
+                if citation_metadata:
+                    # 转换为可序列化格式
+                    for doc_name, info in citation_metadata.items():
+                        serializable_metadata[doc_name] = info.to_dict()
+
+                    yield {
+                        "type": "citation_metadata",
+                        "session_id": session_id,
+                        "metadata": serializable_metadata
+                    }
+                    logger.info(f"发送引用元数据，包含 {len(serializable_metadata)} 个唯一文献")
+
+                # PR-2 阶段D改造: 发送片段映射给前端（用于点击引用精确查看原文）
+                if snippet_map:
+                    yield {
+                        "type": "snippet_map",
+                        "session_id": session_id,
+                        "snippet_map": snippet_map
+                    }
+                    logger.info(f"发送片段映射，包含 {len(snippet_map)} 个片段")
+
+                # PR-2 持久化: 回填 citation_metadata 到已保存的 assistant 消息的 extra_data
+                if serializable_metadata:
+                    try:
+                        from backend.service.chat_history import update_last_assistant_extra_data
+                        update_last_assistant_extra_data(
+                            conversation_id=session_id,
+                            updates={"citation_metadata": serializable_metadata}
+                        )
+                    except Exception as persist_err:
+                        logger.warning(f"持久化 citation_metadata 失败（非致命）: {persist_err}")
+
+            except Exception as meta_error:
+                logger.warning(f"获取引用元数据失败（非致命）: {str(meta_error)}")
 
             # 存储结束节点消息到数据库
             extra_data = {"node_name": "end"}
@@ -399,9 +462,16 @@ async def get_chat_history_list(user_id: str, conversation_id: Optional[str] = N
                     
                     # 如果有额外数据，添加到历史项中
                     if record.get('extra_data'):
-                        # 如果extra_data中有node_name，提取出来
-                        if isinstance(record['extra_data'], dict) and 'node_name' in record['extra_data']:
-                            history_item['node_name'] = record['extra_data']['node_name']
+                        extra = record['extra_data']
+                        if isinstance(extra, dict):
+                            # 提取 node_name
+                            if 'node_name' in extra:
+                                history_item['node_name'] = extra['node_name']
+                            # PR-2 持久化: 恢复引用数据
+                            if 'snippet_map' in extra:
+                                history_item['snippet_map'] = extra['snippet_map']
+                            if 'citation_metadata' in extra:
+                                history_item['citation_metadata'] = extra['citation_metadata']
                     
                     history.append(history_item)
                 

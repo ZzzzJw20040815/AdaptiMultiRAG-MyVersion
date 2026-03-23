@@ -42,6 +42,7 @@ class RAGGraphState(TypedDict, total=False):
     # ==================== 答案生成 ====================
     final_answer: str                  # 最终答案
     answer_sources: List[str]          # 答案来源列表
+    snippet_map: Dict[str, Any]        # PR-2 阶段D: 片段编号映射 {S1: {source, content}, ...}
 
 
 def create_initial_rag_state(

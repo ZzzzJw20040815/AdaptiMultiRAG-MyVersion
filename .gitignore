@@ -79,3 +79,28 @@ rag-backend/backend/rag/storage/lightrag_storage/*/
 volumes/
 **/volumes/
 rag-backend/backend/volumes/
+
+# 忽略视频、图片、PDF、文本文档等非代码文件
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.wmv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.pdf
+*.txt
+*.md
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.xlsx
+*.csv
+
+# 保留关键的项目说明文档
+!README.md
+!STARTUP_GUIDE.md
+!CLAUDE.md

@@ -9,7 +9,7 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = None
     collection_id: Optional[str] = None  # 添加知识库集合ID
     retrieval_mode: Optional[str] = RetrievalMode.AUTO  # 添加检索模式配置
-    max_retrieval_docs: Optional[int] = 3
+    max_retrieval_docs: Optional[int] = 5
     # 系统配置
     system_prompt: Optional[str] = "你是一个专业的RAG助手，能够基于检索到的信息提供准确的回答。"
 

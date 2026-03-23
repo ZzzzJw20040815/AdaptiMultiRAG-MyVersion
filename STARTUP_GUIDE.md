@@ -79,3 +79,47 @@ cd rag-backend
 
 # 启动 (带上编码修正 + uv run)
 $env:PYTHONUTF8="1"; uv run langgraph dev
+
+
+非常简单，就像按那个“撤销/重做”按钮一样方便。你只需要在终端运行下面这两个命令：
+
+1. 切换到“现在的修改”（找回那 27 个文件）
+powershell
+git checkout temp-save-work
+这时你会看到你的代码全回来了。
+
+2. 切换到“最初的修改”（回到干净的状态）
+powershell
+git checkout main
+这时你会看到文件又变回了原来的样子。
+
+小贴士： 如果你不确定自己现在在哪儿，可以随时输入：
+
+powershell
+git branch
+带星号 * 和绿色高亮的就是你当前所在的分支。
+
+账号：admin@example.com
+
+密码：admin123
+
+
+• 最方便的是用 Mermaid CLI（mmdc）直接生成 svg/png。
+
+  1. CLI（推荐，1‑2 条命令）
+
+  # 全局安装一次
+  npm i -g @mermaid-js/mermaid-cli
+
+  # 生成 SVG
+  mmdc -i rag-backend/docs/raggraph-flow.mmd -o rag-backend/docs/raggraph-flow.svg
+
+  # 生成 PNG（可选）
+  mmdc -i rag-backend/docs/raggraph-flow.mmd -o rag-backend/docs/raggraph-flow.png
+
+  2. VS Code（无命令行）
+
+  - 装 Mermaid Preview/Markdown Mermaid 扩展
+  - 打开 rag-backend/docs/raggraph-flow.mmd → 预览 → 导出图片
+
+  如果你希望我在这里直接生成图片，告诉我要 svg 还是 png。

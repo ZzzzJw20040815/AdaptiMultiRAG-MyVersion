@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useAuthStore } from './auth'
-import { 
-  sendMessage as apiSendMessage, 
-  sendMessageStream, 
-  getChatHistory, 
+import {
+  sendMessage as apiSendMessage,
+  sendMessageStream,
+  getChatHistory,
   getSingleConversationHistory,
   getChatHistoryTitles,
   createConversation as apiCreateConversation,
@@ -18,6 +18,8 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const streaming = ref(false)
   const hasUnsavedConversation = ref(false) // 标记是否有未保存的新对话
+  const citationMetadata = ref({}) // PR-2: 存储引用元数据
+  const snippetMap = ref({}) // PR-2 阶段D改造: 存储片段映射 {S1: {source, content}, ...}
 
   // 创建本地临时对话（不调用后端API）
   const createLocalConversation = () => {
@@ -34,7 +36,7 @@ export const useChatStore = defineStore('chat', () => {
       saved: false, // 标记为未保存
       messages: [] // 为临时对话添加本地消息存储
     }
-    
+
     // 如果有未保存的对话，先移除它
     if (hasUnsavedConversation.value) {
       const tempIndex = conversations.value.findIndex(c => !c.saved)
@@ -42,12 +44,12 @@ export const useChatStore = defineStore('chat', () => {
         conversations.value.splice(tempIndex, 1)
       }
     }
-    
+
     conversations.value.unshift(conversation)
     currentConversation.value = conversation
     messages.value = []
     hasUnsavedConversation.value = true
-    
+
     console.log('创建本地临时对话:', conversation)
     return conversation
   }
@@ -57,10 +59,10 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const authStore = useAuthStore()
       const userId = String(authStore.user?.id || 'default_user')
-      
+
       // 调用后端API创建对话
       const response = await apiCreateConversation(userId, title)
-      
+
       if (response.status === 200 && response.data) {
         const conversationData = response.data
         const savedConversation = {
@@ -70,7 +72,7 @@ export const useChatStore = defineStore('chat', () => {
           updatedAt: new Date(conversationData.updated_at),
           saved: true
         }
-        
+
         // 更新当前对话
         if (currentConversation.value && !currentConversation.value.saved) {
           // 找到临时对话并替换
@@ -81,7 +83,7 @@ export const useChatStore = defineStore('chat', () => {
           currentConversation.value = savedConversation
           hasUnsavedConversation.value = false
         }
-        
+
         console.log('成功保存对话到后端:', savedConversation)
         return savedConversation
       } else {
@@ -97,10 +99,10 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const authStore = useAuthStore()
       const userId = String(authStore.user?.id || 'default_user')
-      
+
       // 调用后端API创建对话
       const response = await apiCreateConversation(userId, title)
-      
+
       if (response.status === 200 && response.data) {
         const conversationData = response.data
         const conversation = {
@@ -110,11 +112,11 @@ export const useChatStore = defineStore('chat', () => {
           updatedAt: new Date(conversationData.updated_at),
           saved: true
         }
-        
+
         conversations.value.unshift(conversation)
         currentConversation.value = conversation
         messages.value = []
-        
+
         console.log('成功创建对话:', conversation)
         return conversation
       } else {
@@ -122,7 +124,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     } catch (error) {
       console.error('创建对话失败:', error)
-      
+
       // 如果API调用失败，回退到本地创建
       const conversation = {
         id: Date.now().toString(),
@@ -134,7 +136,7 @@ export const useChatStore = defineStore('chat', () => {
       conversations.value.unshift(conversation)
       currentConversation.value = conversation
       messages.value = []
-      
+
       console.warn('API创建对话失败，使用本地创建:', conversation)
       return conversation
     }
@@ -144,10 +146,10 @@ export const useChatStore = defineStore('chat', () => {
     const conversation = conversations.value.find(c => c.id === conversationId)
     if (conversation) {
       currentConversation.value = conversation
-      
+
       // 检查是否是临时对话（ID以temp_开头）或者saved属性为false
       const isTemporaryConversation = conversationId.startsWith('temp_') || !conversation.saved
-      
+
       if (isTemporaryConversation) {
         // 未保存的对话使用本地存储的消息，确保数组存在
         messages.value = conversation.messages || []
@@ -164,16 +166,16 @@ export const useChatStore = defineStore('chat', () => {
     try {
       loading.value = true
       const response = await getSingleConversationHistory(conversationId)
-      
+
       if (response.status === 200 && response.data) {
         // 检查响应数据结构
         let historyData = response.data
-        
+
         // 如果data是嵌套结构，提取history数组
         if (historyData.success && historyData.history) {
           historyData = historyData.history
         }
-        
+
         // 确保historyData是数组
         if (Array.isArray(historyData)) {
           messages.value = historyData.map((msg, index) => {
@@ -183,7 +185,17 @@ export const useChatStore = defineStore('chat', () => {
               content: msg.content,
               timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date()
             }
-            
+
+            // PR-2 持久化: 从历史记录中恢复引用数据
+            if (msg.snippet_map && Object.keys(msg.snippet_map).length > 0) {
+              snippetMap.value = msg.snippet_map
+              console.log('从历史记录恢复 snippetMap:', Object.keys(msg.snippet_map).length, '个片段')
+            }
+            if (msg.citation_metadata && Object.keys(msg.citation_metadata).length > 0) {
+              citationMetadata.value = msg.citation_metadata
+              console.log('从历史记录恢复 citationMetadata:', Object.keys(msg.citation_metadata).length, '个文献')
+            }
+
             // 格式转换逻辑：统一历史记录和实时消息的格式
             if (msg.type === 'updates' && msg.role === 'system') {
               // 历史记录中的节点更新消息：type: "updates", role: "system"
@@ -265,7 +277,7 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date()
     }
     messages.value.push(userMessage)
-    
+
     // 如果是未保存的对话，同时保存到本地存储
     if (currentConversation.value && !currentConversation.value.saved) {
       if (!currentConversation.value.messages) {
@@ -288,7 +300,7 @@ export const useChatStore = defineStore('chat', () => {
         conversation_id: conversationIdOverride || currentConversation.value.id,
         user_id: String(authStore.user?.id || 'default_user')
       }
-      
+
       // 如果有RAG相关参数，添加到请求数据中
       if (ragMode) {
         chatData.retrieval_mode = ragMode
@@ -299,7 +311,7 @@ export const useChatStore = defineStore('chat', () => {
       if (collectionId) {
         chatData.collection_id = collectionId
       }
-      
+
       console.log('发送到后端的数据:', chatData)
       if (maxRetrievalDocs !== undefined) {
         chatData.max_retrieval_docs = maxRetrievalDocs
@@ -307,14 +319,14 @@ export const useChatStore = defineStore('chat', () => {
       if (systemPrompt) {
         chatData.system_prompt = systemPrompt
       }
-      
+
       // 使用流式API发送消息
       await sendMessageStream(
         chatData,
         (data) => {
           // 处理流式响应数据
           console.log('收到流式数据:', data)
-          
+
           if (data.type === 'start') {
             // 开始处理聊天请求
             console.log('开始处理聊天请求:', data.message)
@@ -380,7 +392,7 @@ export const useChatStore = defineStore('chat', () => {
               expanded: false // 默认折叠状态
             }
             messages.value.push(nodeUpdateMessage)
-            
+
             // 如果是未保存的对话，同时保存到本地存储
             if (currentConversation.value && !currentConversation.value.saved) {
               if (!currentConversation.value.messages) {
@@ -391,6 +403,17 @@ export const useChatStore = defineStore('chat', () => {
           } else if (data.type === 'complete') {
             // 处理完成
             console.log('聊天处理完成:', data.message)
+          } else if (data.type === 'citation_metadata') {
+            // PR-2: 处理引用元数据
+            console.log('收到引用元数据:', data.metadata)
+            citationMetadata.value = data.metadata || {}
+          } else if (data.type === 'retrieved_evidence') {
+            // PR-2 阶段D: 处理证据片段（兼容旧格式）
+            console.log('收到证据片段（旧格式）:', data.evidence)
+          } else if (data.type === 'snippet_map') {
+            // PR-2 阶段D改造: 处理片段映射
+            console.log('收到片段映射:', data.snippet_map)
+            snippetMap.value = data.snippet_map || {}
           } else if (data.type === 'answer' && data.content) {
             // 完整答案（备用处理）
             if (aiMessage) {
@@ -416,13 +439,13 @@ export const useChatStore = defineStore('chat', () => {
           console.log('流式响应完成，最终内容:', aiMessage?.content)
         }
       )
-      
+
       // 处理流式响应已在上面的回调函数中处理
-      
+
     } catch (error) {
       console.error('发送消息失败:', error)
       streaming.value = false
-      
+
       // 如果流式失败，尝试普通API
       try {
         const authStore = useAuthStore()
@@ -431,7 +454,7 @@ export const useChatStore = defineStore('chat', () => {
           conversation_id: currentConversation.value.id,
           user_id: authStore.user?.id || 'default_user'
         }
-        
+
         const response = await apiSendMessage(chatData)
         if (response.status === 200 && response.data) {
           const aiMessage = messages.value[messages.value.length - 1]
@@ -449,20 +472,20 @@ export const useChatStore = defineStore('chat', () => {
     try {
       // 调用后端API删除对话
       const response = await apiDeleteConversation(conversationId)
-      
+
       if (response.status === 200) {
         // API调用成功，从本地状态中移除对话
         const index = conversations.value.findIndex(c => c.id === conversationId)
         if (index > -1) {
           conversations.value.splice(index, 1)
-          
+
           // 如果删除的是当前对话，清空当前对话和消息
           if (currentConversation.value?.id === conversationId) {
             currentConversation.value = null
             messages.value = []
           }
         }
-        
+
         console.log('成功删除对话:', conversationId)
         return { success: true }
       } else {
@@ -470,7 +493,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     } catch (error) {
       console.error('删除对话失败:', error)
-      
+
       // 即使API调用失败，也尝试从本地状态中移除（用户体验优先）
       const index = conversations.value.findIndex(c => c.id === conversationId)
       if (index > -1) {
@@ -480,7 +503,7 @@ export const useChatStore = defineStore('chat', () => {
           messages.value = []
         }
       }
-      
+
       throw error
     }
   }
@@ -489,24 +512,24 @@ export const useChatStore = defineStore('chat', () => {
     try {
       loading.value = true
       const authStore = useAuthStore()
-      
+
       // 确保用户已登录并且有用户信息
       if (!authStore.user?.id) {
         console.warn('用户未登录或缺少用户ID')
         return
       }
-      
+
       const response = await getChatHistory(authStore.user.id)
-      
+
       if (response.status === 200 && response.data) {
         // 检查响应数据结构，后端返回的是 { success: true, conversations: [...] }
         let conversationsData = response.data
-        
+
         // 如果data包含conversations数组，则使用它
         if (conversationsData.success && conversationsData.conversations) {
           conversationsData = conversationsData.conversations
         }
-        
+
         // 确保conversationsData是数组
         if (Array.isArray(conversationsData)) {
           conversations.value = conversationsData.map(conv => ({
@@ -516,7 +539,7 @@ export const useChatStore = defineStore('chat', () => {
             updatedAt: new Date(conv.updated_at || Date.now()),
             saved: true // 从后端加载的对话都是已保存的
           }))
-          
+
           console.log('成功加载对话列表:', conversations.value)
         } else {
           console.warn('对话数据格式不正确:', conversationsData)
@@ -538,6 +561,8 @@ export const useChatStore = defineStore('chat', () => {
     loading,
     streaming,
     hasUnsavedConversation,
+    citationMetadata, // PR-2: 导出引用元数据
+    snippetMap, // PR-2 阶段D改造: 导出片段映射
     createConversation,
     createLocalConversation,
     saveConversationToBackend,
