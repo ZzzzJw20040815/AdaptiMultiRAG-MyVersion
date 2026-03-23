@@ -428,14 +428,58 @@
                   </svg>
                 </div>
                 <div class="flex-1 min-w-0">
-                  <h4 class="text-sm font-normal text-gray-900 truncate" :title="document.name">
-                    {{ document.name }}
+                  <h4 class="text-sm font-normal text-gray-900 break-words" :title="document.academic_title || document.name">
+                    {{ document.academic_title || document.name }}
                   </h4>
                   <p class="text-xs text-gray-500 font-light">
                     {{ document.type === "link" ? "网站链接" : "文件" }}
+                    <span v-if="document.source_type === 'paper'" class="ml-1 text-blue-500">· 学术论文</span>
                   </p>
                 </div>
               </div>
+            </div>
+
+            <!-- 学术元数据展示 (PR-1新增) -->
+            <div v-if="document.authors || document.publish_year" class="mt-2 text-xs text-gray-600">
+              <div v-if="document.authors" class="truncate" :title="formatAuthors(document.authors)">
+                <span class="text-gray-400">作者:</span> {{ formatAuthors(document.authors) }}
+              </div>
+              <div v-if="document.publish_year" class="mt-1">
+                <span class="text-gray-400">年份:</span> {{ document.publish_year }}
+                <span v-if="document.doi" class="ml-2">
+                  <span class="text-gray-400">DOI:</span>
+                  <a :href="'https://doi.org/' + document.doi" target="_blank" class="text-blue-500 hover:underline">{{ document.doi }}</a>
+                </span>
+              </div>
+            </div>
+
+            <!-- 解析状态标签 -->
+            <div class="mt-2 flex items-center gap-2">
+              <span
+                v-if="document.parse_status === 'completed'"
+                class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+              >
+                ✓ 已解析
+              </span>
+              <span
+                v-else-if="document.parse_status === 'processing'"
+                class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+              >
+                ⏳ 解析中
+              </span>
+              <span
+                v-else-if="document.parse_status === 'failed'"
+                class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
+                :title="document.parse_error"
+              >
+                ✗ 解析失败
+              </span>
+              <span
+                v-else-if="document.parse_status === 'pending'"
+                class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600"
+              >
+                待解析
+              </span>
             </div>
 
             <div v-if="document.url" class="text-xs text-gray-700 truncate mt-2" :title="document.url">
@@ -1280,6 +1324,24 @@ const formatTime = (date) => {
     return `${Math.floor(diffInHours)}小时前`;
   } else {
     return targetDate.toLocaleDateString("zh-CN");
+  }
+};
+
+// 格式化作者列表 (PR-1新增)
+const formatAuthors = (authorsJson) => {
+  if (!authorsJson) return "";
+  try {
+    const authors = JSON.parse(authorsJson);
+    if (Array.isArray(authors)) {
+      if (authors.length <= 3) {
+        return authors.join(", ");
+      } else {
+        return authors.slice(0, 3).join(", ") + ` 等${authors.length}人`;
+      }
+    }
+    return authorsJson;
+  } catch (e) {
+    return authorsJson;
   }
 };
 

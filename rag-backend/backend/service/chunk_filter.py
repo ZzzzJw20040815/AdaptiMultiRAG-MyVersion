@@ -52,6 +52,26 @@ _LATEX_CLEANUP_PATTERN = re.compile(
 # 连续空白字符清理
 _WHITESPACE_PATTERN = re.compile(r'\s{3,}')
 
+# 标题页/元数据识别
+# 注意：这里不使用单纯的 \babstract\b，因 OCR 常见粘连形态如 "3dvlaAbstractRecent"
+_ABSTRACT_TOKEN_RE = re.compile(r'abstract', re.IGNORECASE)
+_URL_RE = re.compile(r'https?://|www\.', re.IGNORECASE)
+_EMAIL_RE = re.compile(r'\b[\w\.-]+@[\w\.-]+\.\w+\b')
+_AFFILIATION_RE = re.compile(
+    r'\b(university|institute|department|school|college|laboratory|lab|research)\b',
+    re.IGNORECASE
+)
+_NAME_TOKEN_RE = re.compile(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b')
+_SENTENCE_END_RE = re.compile(r'[.!?。！？]')
+_NAME_WITH_DIGIT_RE = re.compile(r'[A-Z][a-z]{2,}\d+')
+_DIGIT_PREFIXED_NAME_RE = re.compile(r'\d+[A-Z][a-z]{2,}')
+
+# 图表交叉引用短句识别（只过滤“低信息量”的短片段）
+_FIGURE_TABLE_REF_RE = re.compile(
+    r'\b(?:as\s+shown\s+in|shown\s+in|see|refer\s+to)\s+(?:the\s+)?(?:figure|fig\.?|table)\b',
+    re.IGNORECASE
+)
+
 
 def clean_latex_artifacts(text: str) -> str:
     """
@@ -75,6 +95,130 @@ def clean_latex_artifacts(text: str) -> str:
     cleaned = _WHITESPACE_PATTERN.sub('\n\n', cleaned)
     
     return cleaned.strip()
+
+
+def _find_abstract_start(content: str) -> Optional[int]:
+    """
+    宽松识别 abstract 起始位置，兼容 OCR 粘连文本（如 "3dvlaAbstractRecent"）。
+    
+    命中规则：
+    - 命中 "abstract"（大小写不敏感）
+    - 后续字符是分隔符、空白或大写字母（如 AbstractRecent）
+    """
+    if not content:
+        return None
+    
+    for match in _ABSTRACT_TOKEN_RE.finditer(content):
+        end_idx = match.end()
+        next_char = content[end_idx:end_idx + 1]
+        
+        if not next_char:
+            return match.start()
+        if next_char.isspace() or next_char in ":：-—|/\\)]}":
+            return match.start()
+        if next_char.isupper():
+            return match.start()
+    
+    return None
+
+
+def looks_like_title_author_block(text: str) -> bool:
+    """判断文本是否像论文标题页作者/单位元数据。"""
+    if not text:
+        return False
+    
+    words = re.findall(r'[\w\u4e00-\u9fff]+', text)
+    if len(words) < 12:
+        return False
+    
+    signal_count = 0
+    
+    if _URL_RE.search(text) or _EMAIL_RE.search(text):
+        signal_count += 1
+    
+    if _AFFILIATION_RE.search(text):
+        signal_count += 1
+    
+    if len(_NAME_TOKEN_RE.findall(text)) >= 6:
+        signal_count += 1
+    
+    # OCR 常见姓名+编号粘连（如 Zhen1、Qiu1）
+    if len(_NAME_WITH_DIGIT_RE.findall(text)) >= 3:
+        signal_count += 1
+
+    if len(_DIGIT_PREFIXED_NAME_RE.findall(text)) >= 2:
+        signal_count += 1
+    
+    if len(re.findall(r'\d', text)) >= 5:
+        signal_count += 1
+    
+    # URL 中 "." 会干扰句子统计，先移除 URL 再计数
+    text_without_url = _URL_RE.sub(' ', text)
+    if len(_SENTENCE_END_RE.findall(text_without_url)) <= 1:
+        signal_count += 1
+    
+    return signal_count >= 3
+
+
+def normalize_title_front_matter_text(content: str, min_content_length: int = 50) -> str:
+    """
+    清理标题页元数据前缀，仅保留 abstract 及其后的正文。
+    """
+    if not content:
+        return content
+    
+    abstract_idx = _find_abstract_start(content)
+    if abstract_idx is None:
+        return content
+    
+    if abstract_idx <= 40:
+        return content
+    
+    # abstract 应位于 chunk 前半段，避免误切正文
+    if abstract_idx > min(1200, int(len(content) * 0.7)):
+        return content
+    
+    prefix = content[:abstract_idx].strip()
+    if not looks_like_title_author_block(prefix):
+        return content
+    
+    normalized = content[abstract_idx:].strip()
+    if len(normalized) < min_content_length:
+        return content
+    
+    # 粘连修复: AbstractRecent -> Abstract Recent
+    normalized = re.sub(r'(?i)\babstract(?=[A-Z])', 'Abstract ', normalized)
+    
+    return normalized
+
+
+def is_title_page_metadata_text(content: str) -> bool:
+    """
+    识别纯标题页元数据（无有效正文）文本。
+    """
+    if not content:
+        return False
+    
+    if len(content) > 1400:
+        return False
+    
+    if not looks_like_title_author_block(content):
+        return False
+    
+    # 若已包含 abstract，优先走前缀清理，不直接判纯元数据
+    if _find_abstract_start(content) is not None:
+        return False
+    
+    body_signal = re.search(
+        r'\b(introduction|method|methods|experiment|results?|conclusion|'
+        r'模型|方法|实验|结果|结论)\b',
+        content,
+        re.IGNORECASE
+    )
+    if body_signal:
+        return False
+    
+    return True
 
 
 @dataclass
@@ -116,7 +260,7 @@ DEFAULT_CHUNK_FILTER_CONFIG = ChunkFilterConfig(
         
         # ==================== 作者贡献标识 ====================
         "author contributions",
-        "contributions:",
+        "author contributions:",
         "evaluations (ablations",
         "network architecture (tokenizer",
         "developed infrastructure",
@@ -124,18 +268,11 @@ DEFAULT_CHUNK_FILTER_CONFIG = ChunkFilterConfig(
         "paper (figures",
         "data collection and evaluations:",
         
-        # ==================== 参考文献标识 ====================
+        # ==================== 参考文献标识（仅保留明确的参考文献章节标题） ====================
+        # 注意: 单独出现的 "arXiv preprint arXiv:" 等在正文中很常见（如 "Smith et al. arXiv preprint arXiv:2404..."）
+        # 这些已移到 _is_reference_section() 方法中做密度检测，避免误杀正文
         "references\n",
         "bibliography",
-        "* ahn et al",
-        "* brown et al",
-        "* chen et al",
-        "arXiv preprint arXiv:",
-        "in proceedings of",
-        "in conference on",
-        "advances in neural information processing",
-        "ieee international conference",
-        "international conference on machine learning",
         
         # ==================== LaTeX残留 ====================
         "\\newfloatcommand",
@@ -166,13 +303,9 @@ DEFAULT_CHUNK_FILTER_CONFIG = ChunkFilterConfig(
         "creative commons",
         "open access article",
         
-        # ==================== P3 改进：移除图注/表注的简单过滤 ====================
-        # 注意：不再过滤 "figure 1:" 等，因为图注通常包含核心架构描述
-        # 只过滤明显无意义的图表引用
-        "see figure",  # 只是引用，非图注本身
-        "shown in figure",
-        "as shown in table",
-        "refer to table",
+        # ==================== P3 改进：图/表引用不再做硬关键词过滤 ====================
+        # 原始规则会误杀正文（如“如图所示，模型架构包含...”）。
+        # 现在改为在 _is_low_info_figure_table_reference 中仅过滤“低信息量短片段”。
         
         # ==================== P3 新增：软件包致谢 ====================
         "we'd also like to thank the developers",
@@ -231,11 +364,10 @@ DEFAULT_CHUNK_FILTER_CONFIG = ChunkFilterConfig(
     ],
     
     regex_patterns=[
-        # 参考文献条目模式
+        # 参考文献条目模式（仅匹配明确的条目格式）
         r"^\s*\*\s+[A-Z][a-z]+\s+et\s+al\.?\s*\(\d{4}\)",  # * Author et al. (2020)
         r"^\s*\[\d+\]\s+[A-Z][a-z]+",  # [1] Author name
         r"doi:\s*10\.\d{4,}",  # doi:10.xxxx
-        r"arXiv:\d{4}\.\d+",  # arXiv:2404.xxxxx
         r"pmid:\s*\d+",  # PMID:123456
         r"isbn[:\s]*[\d\-]+",  # ISBN
         r"issn[:\s]*[\d\-]+",  # ISSN
@@ -311,12 +443,18 @@ class ChunkFilterService:
             
             # P1: 先清理 LaTeX 残留文本
             cleaned_content = clean_latex_artifacts(content)
+            # P2: 清理标题页前置元数据（标题/作者/单位/URL 等），保留 abstract 后正文
+            normalized_content = self._normalize_title_front_matter(cleaned_content)
             
             # 如果有 page_content 属性，更新清理后的内容
-            if hasattr(chunk, 'page_content') and cleaned_content != content:
-                chunk.page_content = cleaned_content
+            if hasattr(chunk, 'page_content') and normalized_content != content:
+                chunk.page_content = normalized_content
+            if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
+                chunk.metadata["title_front_matter_cleaned"] = normalized_content != content
+                if normalized_content != content:
+                    chunk.metadata["title_front_matter_removed_chars"] = max(len(content) - len(normalized_content), 0)
             
-            is_filtered, reason = self._should_filter_chunk(cleaned_content)
+            is_filtered, reason = self._should_filter_chunk(normalized_content)
             
             if is_filtered:
                 filter_reasons[f"chunk_{i}"] = reason
@@ -371,16 +509,83 @@ class ChunkFilterService:
             if keyword.lower() in content_lower:
                 return True, f"keyword: '{keyword}'"
         
-        # 3. 正则表达式检查
+        # 3. 图表交叉引用短片段检测（放宽规则，仅过滤低信息量短句）
+        if self._is_low_info_figure_table_reference(content):
+            return True, "low_info_figure_table_reference"
+        
+        # 4. 正则表达式检查
         for i, pattern in enumerate(self._compiled_patterns):
             if pattern.search(content):
                 return True, f"regex: '{self.config.regex_patterns[i][:30]}...'"
         
-        # 4. 纯名单检测（大量人名堆砌）
+        # 5. 标题页元数据检测（论文标题 + 作者名单 + 单位/URL）
+        if self._is_title_page_metadata_chunk(content):
+            return True, "title_page_metadata_detected"
+        
+        # 6. 纯名单检测（大量人名堆砌）
         if self._is_name_list(content):
             return True, "name_list_detected"
         
+        # 7. 参考文献章节密度检测（PR-2 改进）
+        if self._is_reference_section(content):
+            return True, "reference_section_detected"
+        
         return False, None
+    
+    def _normalize_title_front_matter(self, content: str) -> str:
+        """
+        清理标题页元数据前缀，避免“论文名片 + 摘要开头”混入同一证据片段。
+        
+        策略：
+        - 当检测到内容中存在 abstract，并且 abstract 前缀明显是标题页元数据块时，
+          仅保留 abstract 及其后的正文。
+        """
+        return normalize_title_front_matter_text(
+            content,
+            min_content_length=self.config.min_content_length
+        )
+    
+    def _looks_like_title_author_block(self, text: str) -> bool:
+        """判断一段文本是否像论文标题页的作者/单位元数据块。"""
+        return looks_like_title_author_block(text)
+    
+    def _is_title_page_metadata_chunk(self, content: str) -> bool:
+        """
+        识别纯标题页元数据 chunk（无有效正文）。
+        
+        主要命中：
+        - 标题 + 作者名单 + 单位/URL + 极少句号
+        - 没有 method/result/experiment 等正文信号
+        """
+        return is_title_page_metadata_text(content)
+    
+    def _is_low_info_figure_table_reference(self, content: str) -> bool:
+        """
+        仅过滤“低信息量”的图/表交叉引用短片段。
+        
+        说明：
+        - 不再把 “shown in figure / as shown in table” 当作硬黑名单。
+        - 只有当内容较短、且不包含方法/结果类信息时才过滤。
+        """
+        if not content:
+            return False
+        
+        if len(content) > 220:
+            return False
+        
+        if not _FIGURE_TABLE_REF_RE.search(content):
+            return False
+        
+        lower = content.lower()
+        informative_keywords = [
+            "propose", "model", "method", "architecture", "experiment", "result",
+            "dataset", "performance", "framework", "approach",
+            "模型", "方法", "实验", "结果", "数据集", "性能"
+        ]
+        if any(keyword in lower for keyword in informative_keywords):
+            return False
+        
+        return True
     
     def _is_name_list(self, content: str) -> bool:
         """
@@ -400,6 +605,44 @@ class ChunkFilterService:
         
         ratio = capitalized_words / len(words)
         return ratio > self.config.max_name_ratio
+    
+    def _is_reference_section(self, content: str) -> bool:
+        """
+        密度检测: 判断 chunk 是否为参考文献章节
+        
+        不再用单个关键词匹配，而是统计多个参考文献指示符的密度。
+        只有当 chunk 中出现 3+ 个参考文献指示符时才认为是参考文献章节。
+        这样正文中偶尔提到的 arXiv 引用不会被误杀。
+        """
+        content_lower = content.lower()
+        
+        # 参考文献指示符列表
+        ref_indicators = [
+            "arXiv preprint arXiv:",
+            "arXiv preprint,",
+            "in proceedings of",
+            "in conference on",
+            "advances in neural information processing",
+            "ieee international conference",
+            "international conference on machine learning",
+            "* ahn et al",
+            "* brown et al",
+            "* chen et al",
+            "* wang et al",
+            "* liu et al",
+            "* zhang et al",
+            "et al., 20",  # 常见参考文献格式: Author et al., 2023
+        ]
+        
+        # 统计命中数
+        hit_count = sum(1 for ind in ref_indicators if ind.lower() in content_lower)
+        
+        # 补充: 统计 arXiv:数字 模式的出现次数
+        arxiv_matches = len(re.findall(r'arXiv:\d{4}\.\d+', content, re.IGNORECASE))
+        hit_count += arxiv_matches
+        
+        # 只有当命中 3 个及以上指示符时，才认为是参考文献章节
+        return hit_count >= 3
     
     def update_config(self, **kwargs) -> None:
         """

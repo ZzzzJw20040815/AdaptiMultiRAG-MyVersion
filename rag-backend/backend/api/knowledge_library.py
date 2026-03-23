@@ -5,6 +5,7 @@ from backend.param.knowledge_library import (
 )
 from backend.param.common import Response
 from backend.service import knowledge_library as library_service
+from backend.service.citation_service import get_all_documents_metadata
 from backend.config.log import get_logger
 from backend.config.dependencies import get_current_user
 
@@ -103,3 +104,25 @@ async def delete_document(document_id: int, current_user: int = Depends(get_curr
     """删除文档"""
     logger.info(f"用户 {current_user} 请求删除文档: {document_id}")
     return await library_service.delete_document(document_id, current_user)
+
+
+@router.get("/citation-metadata/{collection_id}")
+async def get_citation_metadata(collection_id: str, current_user: int = Depends(get_current_user)):
+    """
+    PR-2: 获取知识库的学术引用元数据
+    用于历史对话中显示引用标记的学术信息
+    """
+    logger.info(f"用户 {current_user} 请求获取引用元数据: {collection_id}")
+    try:
+        citation_metadata = get_all_documents_metadata(collection_id, include_aliases=False)
+        if citation_metadata:
+            # 转换为可序列化格式
+            serializable_metadata = {}
+            for doc_name, info in citation_metadata.items():
+                serializable_metadata[doc_name] = info.to_dict()
+            return Response.success(serializable_metadata)
+        else:
+            return Response.success({})
+    except Exception as e:
+        logger.error(f"获取引用元数据失败: {e}")
+        return Response.error(f"获取引用元数据失败: {str(e)}")

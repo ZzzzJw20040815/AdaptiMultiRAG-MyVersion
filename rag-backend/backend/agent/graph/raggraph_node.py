@@ -13,9 +13,15 @@ from ..prompts.raggraph_prompt import (
 from langmem import create_manage_memory_tool, create_search_memory_tool
 from langchain_core.messages import AIMessage
 from ...config.log import get_logger
-from ...service.chunk_filter import get_chunk_filter_service
+from ...service.chunk_filter import (
+    get_chunk_filter_service,
+    clean_latex_artifacts,
+    normalize_title_front_matter_text,
+    is_title_page_metadata_text,
+)
 from ...service.reranker_service import get_reranker_service
 from ...service.source_filter_service import build_source_filter, is_simple_question, get_url_to_name_mapping
+from ...service.citation_service import build_citation_context, get_all_documents_metadata
 import asyncio
 
 class RAGNodes:
@@ -334,8 +340,22 @@ class RAGNodes:
             # 获取 collection_id 用于动态白名单过滤
             collection_id = self.milvus_storage.collection_name if self.milvus_storage else None
 
-            # P2 前置：构建动态白名单来源过滤表达式
-            source_filter_expr = build_source_filter(original_question, collection_id) if collection_id else None
+            # P2 前置：获取原始用户输入（从 messages 中）用于白名单匹配
+            # 原因：original_question 是 LLM 提取的核心问题，可能已经去掉了文献名称前缀
+            # 而用户通过"插入文献"功能添加的文献名称对于白名单匹配很重要
+            raw_user_input = original_question  # 默认使用 original_question
+            messages = state.get("messages", [])
+            if messages:
+                # 获取最新的用户消息作为原始输入
+                latest_message = messages[-1]
+                if hasattr(latest_message, 'content'):
+                    raw_user_input = latest_message.content
+                    self.logger.info(f"[P2白名单] 使用原始用户输入: {raw_user_input[:100]}...")
+                else:
+                    self.logger.info(f"[P2白名单] 使用提取的问题: {original_question[:100]}...")
+            
+            # 构建动态白名单来源过滤表达式（使用原始用户输入，而非提取的核心问题）
+            source_filter_expr = build_source_filter(raw_user_input, collection_id) if collection_id else None
             
             # 创建混合检索器（带 filter）
             # 注意：Milvus 使用 'expr' 参数，不是 'filter'
@@ -543,7 +563,18 @@ class RAGNodes:
             # 获取 URL -> 名称映射，用于将 Milvus 中的 URL 转换为友好名称
             collection_id = self.milvus_storage.collection_name if self.milvus_storage else None
             url_to_name = get_url_to_name_mapping(collection_id) if collection_id else {}
-            
+
+            # PR-2: 构建增强的引用上下文（包含学术元数据）
+            from backend.service.citation_service import (
+                build_citation_context,
+                normalize_citation_index_section,
+            )
+
+            citation_context = {}
+            if collection_id and retrieved_docs:
+                citation_context = build_citation_context(collection_id, retrieved_docs, url_to_name)
+                self.logger.info(f"构建引用上下文，包含 {len(citation_context.get('citation_map', {}))} 个文献的元数据")
+
             # 方案B：获取可用文献名称列表（可能来自图检索节点或重新获取）
             available_doc_names = state.get("available_doc_names", [])
             if not available_doc_names and url_to_name:
@@ -551,17 +582,111 @@ class RAGNodes:
             
             self.logger.info(f"可引用文献列表: {available_doc_names}")
             
-            # 准备文档内容
+            # PR-2 阶段D改造: 按片段编号传递文档给LLM，实现精确引用
+            from backend.rag.chunks.snippet_highlighter import (
+                extract_highlight,
+                extract_highlight_candidates,
+                extract_context_window,
+            )
+            def _snippet_role_priority(role: str, question: str) -> int:
+                lower = (question or "").lower()
+                if any(token in lower for token in ("实验", "结果", "性能", "指标", "效果", "对比", "提升", "experiment", "result", "performance", "metric", "benchmark", "accuracy")):
+                    priorities = {"experiment": 0, "method": 1, "summary": 2, "motivation": 3, "general": 4}
+                elif any(token in lower for token in ("方法", "架构", "机制", "原理", "训练", "method", "architecture", "mechanism", "training", "approach")):
+                    priorities = {"method": 0, "summary": 1, "motivation": 2, "experiment": 3, "general": 4}
+                else:
+                    priorities = {"motivation": 0, "summary": 1, "method": 2, "experiment": 3, "general": 4}
+                return priorities.get(role or "general", 9)
+
             documents_text = ""
+            snippet_map = {}  # {S1: {source: "论文A.pdf", content: "片段内容...", highlight: "精确句子"}, ...}
             if retrieved_docs:
-                for i, doc in enumerate(retrieved_docs):
+                prepared_snippets = []
+                for position, doc in enumerate(retrieved_docs):
                     # 获取文档来源信息
-                    raw_source = doc.metadata.get("document_name", doc.metadata.get("source", f"未知来源_{i+1}"))
+                    raw_source = doc.metadata.get("document_name", doc.metadata.get("source", f"未知来源_{position + 1}"))
                     # 将 URL 转换为友好名称
                     source = url_to_name.get(raw_source, raw_source)
-                    documents_text += f"\n[{source}]:\n{doc.page_content}\n"
+                    raw_snippet_content = doc.page_content or ""
+                    snippet_content = normalize_title_front_matter_text(
+                        clean_latex_artifacts(raw_snippet_content),
+                        min_content_length=30,
+                    ).strip()
+                    if not snippet_content:
+                        continue
+                    if is_title_page_metadata_text(snippet_content):
+                        self.logger.info(f"跳过标题页元数据片段: source={source}")
+                        continue
+
+                    evidence_candidates = extract_highlight_candidates(
+                        snippet_content,
+                        original_question,
+                        max_candidates=3,
+                    )
+                    highlight = evidence_candidates[0]["text"] if evidence_candidates else extract_highlight(
+                        snippet_content,
+                        original_question,
+                        max_sentences=1,
+                    )
+                    excerpt = extract_context_window(snippet_content, highlight)
+                    primary_candidate = evidence_candidates[0] if evidence_candidates else {}
+                    prepared_snippets.append({
+                        "position": position,
+                        "source": source,
+                        "raw_source": raw_source,
+                        "content": snippet_content,
+                        "highlight": highlight,
+                        "excerpt": excerpt,
+                        "primary_role": primary_candidate.get("role", "general"),
+                        "primary_label": primary_candidate.get("label", "相关证据"),
+                        "evidence_candidates": [
+                            {
+                                **candidate,
+                                "context": extract_context_window(
+                                    snippet_content,
+                                    candidate["text"],
+                                    window_chars=220,
+                                ),
+                            }
+                            for candidate in evidence_candidates
+                        ],
+                        "title_front_matter_cleaned": snippet_content != (raw_snippet_content or "").strip(),
+                    })
+
+                prepared_snippets.sort(
+                    key=lambda item: (
+                        _snippet_role_priority(item.get("primary_role"), original_question),
+                        item.get("position", 0),
+                    )
+                )
+
+                for snippet_index, snippet_info in enumerate(prepared_snippets, start=1):
+                    snippet_id = f"S{snippet_index}"
+                    documents_text += (
+                        f"\n[{snippet_id}] (来源: {snippet_info['source']} | 推荐用途: {snippet_info['primary_label']})\n"
+                        f"优先证据: {snippet_info['highlight']}\n"
+                        f"{snippet_info['content']}\n"
+                    )
+                    # 构建 snippet_map，供前端精确查找
+                    snippet_map[snippet_id] = {
+                        "source": snippet_info["source"],
+                        "raw_source": snippet_info["raw_source"],
+                        "content": snippet_info["content"],
+                        "highlight": snippet_info["highlight"],
+                        "excerpt": snippet_info["excerpt"],
+                        "primary_role": snippet_info["primary_role"],
+                        "primary_label": snippet_info["primary_label"],
+                        "evidence_candidates": snippet_info["evidence_candidates"],
+                        "title_front_matter_cleaned": snippet_info["title_front_matter_cleaned"],
+                    }
             else:
                 documents_text = "暂无检索到的相关文档。"
+
+            if not documents_text:
+                documents_text = "暂无检索到的相关文档。"
+
+            # 存储 snippet_map 到状态，供 chat.py 发送给前端
+            state["snippet_map"] = snippet_map
 
             # 获取答案生成提示词
             prompt_template = RAGGraphPrompts.get_answer_generation_prompt()
@@ -576,7 +701,7 @@ class RAGNodes:
             # 直接调用LLM生成答案
             try:
                 answer_result = self.llm.invoke(prompt)
-                answer_content = answer_result.content
+                answer_content = normalize_citation_index_section(answer_result.content)
                 
                 #self.logger.info(f"{answer_result}")
 
@@ -585,9 +710,18 @@ class RAGNodes:
                 state["final_answer"] = answer_content
                 state["answer_sources"] = []  # 不再从结构化输出中提取来源
 
+                # PR-2: 存储引用元数据到状态，供前端使用
+                if citation_context:
+                    state["citation_metadata"] = citation_context.get("citation_map", {})
+                    state["evidence_snippets"] = {
+                        doc["source"]: doc["content"][:500]
+                        for doc in citation_context.get("documents", [])
+                    }
+
                 self.logger.info("答案生成成功")
 
                 # 添加AI回复消息到messages
+                answer_result.content = answer_content
                 state["messages"] = [answer_result]
 
             except Exception as parse_error:

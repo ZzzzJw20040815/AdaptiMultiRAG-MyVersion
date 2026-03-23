@@ -116,6 +116,38 @@ class TestKeywordFiltering:
         assert "accuracy" in result[0].page_content
 
 
+class TestFigureTableReferenceFiltering:
+    """图表引用过滤测试（放宽策略）"""
+    
+    def test_keep_informative_figure_reference(self):
+        """正文中含有 figure/table 引用时，不应被误过滤"""
+        service = ChunkFilterService()
+        
+        chunks = [
+            MockDocument(
+                "As shown in Figure 3, the model architecture includes a 3D tokenizer "
+                "and achieves better reasoning performance on embodied tasks."
+            )
+        ]
+        
+        result = service.filter_chunks(chunks)
+        assert len(result) == 1
+        assert "architecture" in result[0].page_content
+    
+    def test_filter_low_info_short_figure_reference(self):
+        """仅包含图表指代且信息量很低的短片段应被过滤"""
+        service = ChunkFilterService()
+        
+        chunks = [
+            MockDocument(
+                "As shown in Figure 2 and Table 1, see figure for details and refer to table."
+            )
+        ]
+        
+        result = service.filter_chunks(chunks)
+        assert len(result) == 0
+
+
 # ==================== 正则过滤测试 ====================
 
 class TestRegexFiltering:
@@ -134,8 +166,8 @@ class TestRegexFiltering:
         assert len(result) == 1
         assert "accuracy" in result[0].page_content
     
-    def test_filter_arxiv_pattern(self):
-        """测试过滤arXiv模式"""
+    def test_keep_single_arxiv_mention_in_body(self):
+        """正文中单次 arXiv 提及不应被误过滤"""
         service = ChunkFilterService()
         
         chunks = [
@@ -144,8 +176,8 @@ class TestRegexFiltering:
         ]
         
         result = service.filter_chunks(chunks)
-        assert len(result) == 1
-        assert "transformer" in result[0].page_content
+        assert len(result) == 2
+        assert any("transformer" in doc.page_content for doc in result)
     
     def test_filter_reference_citation(self):
         """测试过滤参考文献条目"""
@@ -203,6 +235,100 @@ class TestNameListFiltering:
         result = service.filter_chunks(chunks)
         assert len(result) == 1
         assert "experiment" in result[0].page_content
+
+
+class TestTitlePageMetadataHandling:
+    """标题页元数据处理测试"""
+    
+    def test_strip_title_front_matter_keep_abstract(self):
+        """标题页前缀应被清理，仅保留 abstract 及其后内容"""
+        service = ChunkFilterService()
+        
+        chunk = MockDocument(
+            "3D-VLA: A 3D Vision-Language-Action Generative World Model "
+            "Haoyu Zhen1 Xiaowen Qiu1 Peihao Chen3 https://vis-www.cs.umass.edu/3dvla/ "
+            "Abstract: Recent vision-language-action models rely on 2D inputs and lack "
+            "3D world understanding. We propose a generative world model for grounded action."
+        )
+        
+        result = service.filter_chunks([chunk])
+        
+        assert len(result) == 1
+        normalized = result[0].page_content.lower()
+        assert normalized.startswith("abstract")
+        assert "haoyu zhen" not in normalized
+        assert "generative world model" in normalized
+
+    def test_strip_glued_title_front_matter_keep_abstract(self):
+        """OCR粘连的标题页前缀应被清理，仅保留可读摘要正文"""
+        service = ChunkFilterService()
+
+        chunk = MockDocument(
+            "3D-VLA: A 3D Vision-Language-Action Generative World Model"
+            "Haoyu Zhen1 2Xiaowen Qiu1Peihao Chen3Jincheng Yang2Xin Yan4"
+            "Yilun Du5Yining Hong6Chuang Gan17https://vis-www.cs.umass.edu/3dvla"
+            "AbstractRecent vision-language-action (VLA) models rely on 2D inputs, "
+            "lacking integration with the broader realm of the 3D physical world."
+        )
+
+        result = service.filter_chunks([chunk])
+
+        assert len(result) == 1
+        normalized = result[0].page_content.lower()
+        assert normalized.startswith("abstract")
+        assert "haoyu zhen" not in normalized
+        assert "rely on 2d inputs" in normalized
+
+    def test_filter_pure_title_page_metadata_chunk(self):
+        """纯封面标题页chunk应被直接过滤"""
+        service = ChunkFilterService()
+
+        chunks = [
+            MockDocument("The method achieves strong performance on embodied reasoning tasks with 3D scene understanding."),
+            MockDocument(
+                "3D-VLA: A 3D Vision-Language-Action Generative World Model"
+                "Haoyu Zhen1 2Xiaowen Qiu1Peihao Chen3Jincheng Yang2Xin Yan4"
+                "Yilun Du5Yining Hong6Chuang Gan17https://vis-www.cs.umass.edu/3dvla"
+            ),
+        ]
+
+        result = service.filter_chunks(chunks)
+
+        assert len(result) == 1
+        assert "embodied reasoning" in result[0].page_content
+    
+    def test_filter_pure_title_metadata_chunk(self):
+        """纯标题页元数据（无正文）应被过滤"""
+        service = ChunkFilterService()
+        
+        chunk = MockDocument(
+            "3D-VLA: A 3D Vision-Language-Action Generative World Model "
+            "Haoyu Zhen1 Xiaowen Qiu1 Peihao Chen3 "
+            "University of Massachusetts Amherst, Department of Computer Science "
+            "https://vis-www.cs.umass.edu/3dvla/"
+        )
+        
+        result = service.filter_chunks([chunk])
+        assert len(result) == 0
+
+    def test_strip_sticky_abstract_prefix(self):
+        """OCR粘连文本(3dvlaAbstractRecent)也应清理标题页前缀"""
+        service = ChunkFilterService()
+
+        chunk = MockDocument(
+            "3D-VLA: A 3D Vision-Language-Action Generative World Model"
+            "Haoyu Zhen1 2Xiaowen Qiu1Peihao Chen3Jincheng Yang2Xin Yan4"
+            "Yilun Du5Yining Hong6Chuang Gan17https://vis-www.cs. umass. edu/3dvla"
+            "AbstractRecent vision-language-action (VLA) models rely on 2D inputs, "
+            "lacking integration with the broader realm of the 3D physical world."
+        )
+
+        result = service.filter_chunks([chunk])
+        assert len(result) == 1
+        normalized = result[0].page_content
+        assert normalized.lower().startswith("abstract")
+        assert "haoyu zhen" not in normalized.lower()
+        assert "vision-language-action (vla) models rely on 2d inputs" in normalized.lower()
 
 
 # ==================== 真实场景测试 ====================

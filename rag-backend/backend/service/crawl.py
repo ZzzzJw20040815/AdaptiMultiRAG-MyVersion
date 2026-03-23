@@ -636,8 +636,39 @@ async def process_oss_file(request: CrawlRequest):
             tmp_file_path = tmp_file.name
         
         logger.info(f"文件已下载到临时目录: {tmp_file_path}")
-        
-        # 4. 提取文件内容
+
+        # 4. 提取学术元数据（PR-1新增）
+        file_extension = os.path.splitext(file_name)[1].lower().lstrip('.')
+        if file_extension == 'pdf':
+            from backend.rag.chunks.academic_metadata_extractor import extract_academic_metadata
+            from backend.service.knowledge_library import update_document_academic_metadata
+
+            try:
+                logger.info(f"开始提取PDF学术元数据: {file_name}")
+                academic_metadata = extract_academic_metadata(tmp_file_path, "pdf")
+                metadata_dict = academic_metadata.to_dict()
+
+                # 更新数据库中的学术元数据
+                await update_document_academic_metadata(
+                    collection_id=request.collection_id,
+                    url=request.url,
+                    metadata=metadata_dict,
+                    parse_status="completed"
+                )
+                logger.info(f"学术元数据提取完成: title={academic_metadata.academic_title}, authors={academic_metadata.authors}")
+            except Exception as e:
+                logger.warning(f"学术元数据提取失败（非致命）: {str(e)}")
+                # 提取失败不影响后续流程，只更新状态
+                from backend.service.knowledge_library import update_document_academic_metadata
+                await update_document_academic_metadata(
+                    collection_id=request.collection_id,
+                    url=request.url,
+                    metadata={"source_type": "document"},
+                    parse_status="failed",
+                    parse_error=str(e)
+                )
+
+        # 5. 提取文件内容
         extractor = DocumentExtractor()
         document_content = extractor.read_document(tmp_file_path)
         

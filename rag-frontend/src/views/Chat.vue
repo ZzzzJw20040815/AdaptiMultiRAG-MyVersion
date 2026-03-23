@@ -946,6 +946,192 @@ flowchart TD
         </div>
       </div>
     </div>
+
+    <!-- PR-2 阶段D改造: 证据片段抽屉 - 精确片段展示 -->
+    <div
+      v-if="evidenceDrawerVisible"
+      class="fixed inset-0 bg-black bg-opacity-50 flex justify-end z-50"
+      @click="evidenceDrawerVisible = false"
+    >
+      <div
+        :style="{ width: evidenceDrawerWidth + 'px' }"
+        class="bg-white h-full overflow-y-auto shadow-xl relative flex-shrink-0"
+        @click.stop
+      >
+        <div
+          @mousedown="startEvidenceResize"
+          class="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-gray-300 transition-colors z-20 group"
+          :class="{ 'bg-gray-400': isEvidenceResizing }"
+        >
+          <div
+            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-12 bg-gray-300 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+          ></div>
+        </div>
+        <!-- 抽屉头部 -->
+        <div class="sticky top-0 bg-white border-b border-gray-200 p-4 z-10">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <h3 class="text-lg font-medium text-gray-900">引用原文</h3>
+              <span
+                v-if="currentEvidenceDoc?.snippetId"
+                class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium"
+              >
+                {{ currentEvidenceDoc.snippetId }}
+              </span>
+            </div>
+            <button
+              @click="evidenceDrawerVisible = false"
+              class="text-gray-400 hover:text-gray-600 p-1 rounded transition-colors"
+            >
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 文献信息 -->
+        <div class="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h4 class="text-base font-medium text-gray-900 leading-tight">
+                {{ currentEvidenceDoc?.title || currentEvidenceDoc?.name }}
+              </h4>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
+                <span v-if="currentEvidenceDoc?.authors?.length" class="flex items-center gap-1">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  {{ currentEvidenceDoc.authors.slice(0, 2).join(', ') }}{{ currentEvidenceDoc.authors.length > 2 ? ' 等' : '' }}
+                </span>
+                <span v-if="currentEvidenceDoc?.year" class="flex items-center gap-1">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {{ currentEvidenceDoc.year }}年
+                </span>
+              </div>
+              <div v-if="currentEvidenceDoc?.doi" class="mt-2">
+                <a
+                  :href="`https://doi.org/${currentEvidenceDoc.doi}`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  DOI: {{ currentEvidenceDoc.doi }}
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 精确证据片段 -->
+        <div class="p-4">
+          <!-- 精确模式标题（单个片段） -->
+          <div v-if="currentEvidenceDoc?.snippetId" class="flex items-center gap-2 mb-4">
+            <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h5 class="text-sm font-medium text-gray-700">
+              该引用对应的原文片段
+            </h5>
+          </div>
+          <!-- 多片段模式标题 -->
+          <div v-else class="flex items-center gap-2 mb-4">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <h5 class="text-sm font-medium text-gray-700">
+              检索到的相关文段 ({{ currentEvidenceSnippets.length }})
+            </h5>
+          </div>
+
+          <div v-if="currentEvidenceSnippets.length > 0" class="space-y-3">
+            <div
+              v-for="(snippet, index) in currentEvidenceSnippets"
+              :key="snippet.id || index"
+              :class="[
+                'border rounded-lg p-4 transition-colors',
+                currentEvidenceDoc?.snippetId
+                  ? 'bg-green-50 border-green-200'
+                  : 'bg-gray-50 border-gray-200 hover:border-blue-300 hover:bg-blue-50/30'
+              ]"
+            >
+              <div class="flex items-start gap-3">
+                <span
+                  :class="[
+                    'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium',
+                    currentEvidenceDoc?.snippetId
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-amber-100 text-amber-700'
+                  ]"
+                >
+                  {{ getEvidenceSnippetBadge(snippet, index) }}
+                </span>
+                <div class="flex-1 min-w-0">
+                  <p
+                    v-if="snippet.label"
+                    class="text-xs font-semibold tracking-wide uppercase text-gray-500 mb-2"
+                  >
+                    {{ snippet.label }}
+                  </p>
+                  <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{ snippet.text }}</p>
+                  <div
+                    v-if="snippet.context && snippet.context !== snippet.text"
+                    class="mt-3 p-3 rounded-lg border border-gray-200 bg-white/80"
+                  >
+                    <p class="text-xs font-medium text-gray-500 mb-1">相邻上下文</p>
+                    <p class="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">{{ snippet.context }}</p>
+                  </div>
+                  <p
+                    v-if="snippet.cleaned"
+                    class="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 inline-block"
+                  >
+                    已自动去除封面标题、作者与机构等元数据噪声
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 查看更多上下文按钮 -->
+            <div v-if="currentEvidenceFullContent && currentEvidenceFullContent !== (currentEvidenceSnippets[0]?.context || currentEvidenceSnippets[0]?.text || '')" class="mt-3">
+              <button
+                @click="evidenceExpandedContext = !evidenceExpandedContext"
+                class="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors font-medium"
+              >
+                <svg class="w-3.5 h-3.5 transition-transform" :class="{ 'rotate-90': evidenceExpandedContext }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+                {{ evidenceExpandedContext ? '收起完整上下文' : '查看完整上下文' }}
+              </button>
+              <div
+                v-if="evidenceExpandedContext"
+                class="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-lg"
+              >
+                <p class="text-xs text-gray-500 mb-2 font-medium">原始检索片段：</p>
+                <p class="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">{{ currentEvidenceFullContent }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="text-center py-8 text-gray-500">
+            <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p class="text-sm">暂无检索到的文段</p>
+            <p class="text-xs mt-1">该引用可能来自图检索或其他来源</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1008,6 +1194,10 @@ const agentPanelWidth = ref(384); // 初始宽度 384px (w-96)
 const isResizing = ref(false);
 const startX = ref(0);
 const startWidth = ref(0);
+const evidenceDrawerWidth = ref(560);
+const isEvidenceResizing = ref(false);
+const evidenceStartX = ref(0);
+const evidenceStartWidth = ref(0);
 
 // 节点名称到流程图节点ID的映射
 const nodeNameToId = {
@@ -1051,6 +1241,96 @@ const currentConversation = computed(() => chatStore.currentConversation);
 const messages = computed(() => chatStore.messages);
 const streaming = computed(() => chatStore.streaming);
 const loading = computed(() => chatStore.loading);
+const citationMetadata = computed(() => chatStore.citationMetadata); // PR-2: 引用元数据
+const snippetMap = computed(() => chatStore.snippetMap); // PR-2 阶段D改造: 片段映射
+
+// PR-2 阶段D改造: 证据抽屉状态
+const evidenceDrawerVisible = ref(false);
+const currentEvidenceDoc = ref(null); // 当前查看的文献信息
+const currentEvidenceSnippets = ref([]); // 当前文献的证据片段
+const currentEvidenceFullContent = ref(null); // PR-2: 完整chunk内容（用于"查看更多上下文"）
+const evidenceExpandedContext = ref(false); // PR-2: 是否展开完整上下文
+
+const findCitationMetadata = (docName) => {
+  if (!docName || !citationMetadata.value) {
+    return null;
+  }
+
+  if (citationMetadata.value[docName]) {
+    return citationMetadata.value[docName];
+  }
+
+  for (const metadata of Object.values(citationMetadata.value)) {
+    if (metadata?.doc_name === docName || metadata?.academic_title === docName) {
+      return metadata;
+    }
+  }
+
+  return null;
+};
+
+const toEvidenceSnippet = (snippetId, snippetInfo) => {
+  if (!snippetInfo) {
+    return [{
+      id: snippetId || null,
+      badge: snippetId ? snippetId.replace('S', '') : null,
+      label: '证据片段',
+      text: '',
+      context: '',
+      cleaned: false,
+    }];
+  }
+
+  const candidates = Array.isArray(snippetInfo.evidence_candidates) ? snippetInfo.evidence_candidates : [];
+  if (snippetId && candidates.length > 0) {
+    return candidates.map((candidate, index) => ({
+      id: `${snippetId}-${index + 1}`,
+      badge: candidates.length > 1 ? `${snippetId.replace('S', '')}-${index + 1}` : snippetId.replace('S', ''),
+      label: candidate.label || `证据句 ${index + 1}`,
+      text: candidate.text || '',
+      context: candidate.context || snippetInfo.excerpt || snippetInfo.content || '',
+      cleaned: Boolean(snippetInfo.title_front_matter_cleaned),
+    }));
+  }
+
+  const text = snippetInfo.highlight || snippetInfo.excerpt || snippetInfo.content || '';
+  const context = snippetInfo.excerpt || snippetInfo.content || '';
+
+  return [{
+    id: snippetId || null,
+    badge: snippetId ? snippetId.replace('S', '') : null,
+    label: snippetId ? '证据句' : '证据片段',
+    text,
+    context,
+    cleaned: Boolean(snippetInfo.title_front_matter_cleaned),
+  }];
+};
+
+const getEvidenceSnippetBadge = (snippet, index) => {
+  if (snippet?.badge) {
+    return snippet.badge;
+  }
+
+  const snippetId = currentEvidenceDoc.value?.snippetId || snippet?.id || '';
+  const match = typeof snippetId === 'string' ? snippetId.match(/^S(\d+)(?:-(\d+))?$/) : null;
+
+  if (match) {
+    const base = match[1];
+    const variant = match[2];
+
+    if (variant) {
+      return `${base}-${variant}`;
+    }
+
+    if (currentEvidenceDoc.value?.snippetId && currentEvidenceSnippets.value.length > 1) {
+      return `${base}-${index + 1}`;
+    }
+
+    return base;
+  }
+
+  return String(index + 1);
+};
 
 // 将消息分组为用户消息和对话轮次（node_updates + assistant）
 // 这样可以确保节点更新消息显示在答案上方
@@ -1359,58 +1639,222 @@ const scrollToBottom = () => {
   });
 };
 
+const resolveCitationTarget = (event) => {
+  const block = event?.currentTarget?.closest('p, li');
+  if (!block) {
+    return null;
+  }
+
+  const blockText = block.textContent?.trim() || '';
+  if (!blockText) {
+    return null;
+  }
+
+  if (/^(引用片段索引|参考文献)/.test(blockText)) {
+    return null;
+  }
+
+  if (/^\[S?\d+\]\s/.test(blockText)) {
+    return null;
+  }
+
+  return block;
+};
+
+const setCitationTargetHover = (event, isActive) => {
+  const target = resolveCitationTarget(event);
+  if (!target) {
+    return;
+  }
+
+  target.classList.toggle('citation-target-hover', isActive);
+};
+
+const activateCitationScope = (event) => {
+  const target = resolveCitationTarget(event);
+  if (!target) {
+    return;
+  }
+
+  target.classList.remove('citation-target-active');
+  void target.offsetWidth;
+  target.classList.add('citation-target-active');
+
+  window.setTimeout(() => {
+    target.classList.remove('citation-target-active');
+  }, 1800);
+};
+
 // 渲染markdown内容
 const renderMarkdown = (content) => {
   // 预处理：修复 LaTeX 公式格式
   // markdown-it-texmath 不支持 `$ P $` 这种带空格的格式，需要转换为 `$P$`
   let processedContent = content;
-  
+
   // 处理行内公式：`$ ... $` -> `$...$`（移除美元符号内侧的空格）
   // 匹配 $ 后有空格，或 $ 前有空格的情况
   processedContent = processedContent.replace(
-    /\$\s+([^$]+?)\s+\$/g, 
+    /\$\s+([^$]+?)\s+\$/g,
     (match, inner) => `$${inner.trim()}$`
   );
-  
+
   // 处理只有一侧有空格的情况
   processedContent = processedContent.replace(
-    /\$\s+([^$]+?)\$/g, 
+    /\$\s+([^$]+?)\$/g,
     (match, inner) => `$${inner.trim()}$`
   );
   processedContent = processedContent.replace(
-    /\$([^$]+?)\s+\$/g, 
+    /\$([^$]+?)\s+\$/g,
     (match, inner) => `$${inner.trim()}$`
   );
+
+  // 转义特殊标记：防止类似 <image> <pcd> <obj> <loc0-255> 等被当作 HTML 标签
+  // 这些标记常见于机器人、3D视觉等领域的论文中
+  // 匹配模式：<标识符> 或 </标识符> 或 <标识符数字> 等，但排除常见 HTML 标签
+  const htmlTags = ['p', 'div', 'span', 'a', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
+                    'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 
+                    'img', 'code', 'pre', 'blockquote', 'em', 'strong', 'b', 'i', 'u',
+                    'sup', 'sub', 'del', 's', 'mark', 'small', 'big', 'svg', 'path'];
   
-  // 解析参考文献部分，建立编号到文献名的映射
-  // 匹配格式如: [1] 文献名称 或 [1] 文献名称
-  const citationMap = {};
-  const refPattern = /\[(\d+)\]\s*([^\n\[]+)/g;
+  processedContent = processedContent.replace(
+    /<\/?([a-zA-Z][a-zA-Z0-9_\-\/]*?)>/g,
+    (match, tagName) => {
+      // 如果是常见 HTML 标签，保持原样
+      const lowerTag = tagName.toLowerCase().replace('/', '');
+      if (htmlTags.includes(lowerTag)) {
+        return match;
+      }
+      // 否则转义尖括号，使其显示为文本
+      return match.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+  );
+
+  // PR-2 阶段D改造: 解析参考文献部分，建立片段编号到文献名的映射
+  // 匹配格式如: [S1] 文献名称 或 [1] 文献名称（向后兼容）
+  const textCitationMap = {};
+  const refPatternS = /\[S(\d+)\]\s*([^\n\[]+)/g;
   let refMatch;
-  while ((refMatch = refPattern.exec(content)) !== null) {
+  while ((refMatch = refPatternS.exec(content)) !== null) {
     const num = refMatch[1];
     const name = refMatch[2].trim();
-    // 只保存非空且长度合理的文献名（避免匹配到正文中的引用）
-    if (name.length > 5 && name.length < 200) {
-      citationMap[num] = name;
+    if (name.length > 2 && name.length < 200) {
+      textCitationMap[`S${num}`] = name;
     }
   }
-  
+  // 兼容旧格式 [1] 文献名称
+  const refPatternOld = /\[(\d+)\]\s*([^\n\[]+)/g;
+  while ((refMatch = refPatternOld.exec(content)) !== null) {
+    const num = refMatch[1];
+    const name = refMatch[2].trim();
+    if (name.length > 5 && name.length < 200) {
+      textCitationMap[num] = name;
+    }
+  }
+
   // 渲染 Markdown
   let html = md.render(processedContent);
-  
-  // 后处理：为引用标记 [1] [2] 添加样式和tooltip
-  // 使用解析到的文献名作为tooltip，如果没有则显示"引用 N"
+
+  // PR-2 阶段D改造: 后处理 - 为引用标记 [S1] [S2] 添加增强样式和tooltip
+  // 同时兼容旧格式 [1] [2]
+  // 先处理 [S数字] 格式（新格式）
+  html = html.replace(
+    /\[S(\d+)\]/g,
+    (match, num) => {
+      const snippetId = `S${num}`;
+      // 从 snippetMap 获取片段信息
+      const snippetInfo = snippetMap.value ? snippetMap.value[snippetId] : null;
+      // 从 textCitationMap 获取文献名
+      const docName = textCitationMap[snippetId] || (snippetInfo ? snippetInfo.source : '');
+
+      // 构建 tooltip
+      let tooltipContent = `片段 ${snippetId}`;
+      let hasMetadata = false;
+
+      if (snippetInfo) {
+        const parts = [];
+        // 片段来源
+        parts.push(`来源: ${snippetInfo.source}`);
+        // 片段内容预览（前100字）
+        if (snippetInfo.content) {
+          const previewSource = snippetInfo.excerpt || snippetInfo.highlight || snippetInfo.content;
+          const preview = previewSource.substring(0, 100) + (previewSource.length > 100 ? '...' : '');
+          parts.push(`内容: ${preview}`);
+        }
+        tooltipContent = parts.join('\n');
+      }
+
+      // 尝试从 citationMetadata 查找文献学术信息
+      if (docName && citationMetadata.value) {
+        const metadata = findCitationMetadata(docName);
+        if (metadata) {
+          hasMetadata = true;
+          const parts = [];
+          if (metadata.academic_title) parts.push(`📄 ${metadata.academic_title}`);
+          else parts.push(`📄 ${docName}`);
+          if (metadata.authors && metadata.authors.length > 0) {
+            const authorStr = metadata.authors.length > 3
+              ? `${metadata.authors.slice(0, 3).join(', ')} 等`
+              : metadata.authors.join(', ');
+            parts.push(`👤 ${authorStr}`);
+          }
+          if (metadata.publish_year) parts.push(`📅 ${metadata.publish_year}年`);
+          if (snippetInfo && (snippetInfo.excerpt || snippetInfo.highlight || snippetInfo.content)) {
+            const previewSource = snippetInfo.excerpt || snippetInfo.highlight || snippetInfo.content;
+            const preview = previewSource.substring(0, 80) + (previewSource.length > 80 ? '...' : '');
+            parts.push(`📝 ${preview}`);
+          }
+          tooltipContent = parts.join('\n');
+        }
+      }
+
+      const escapedTooltip = tooltipContent.replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
+      const badgeClass = hasMetadata ? 'citation-badge citation-badge-enhanced' : 'citation-badge';
+
+      // 点击时传递片段编号
+      return `<span class="${badgeClass} citation-clickable" title="${escapedTooltip}" data-snippet-id="${snippetId}" onmouseenter="window.setCitationTargetHover && window.setCitationTargetHover(event, true)" onmouseleave="window.setCitationTargetHover && window.setCitationTargetHover(event, false)" onclick="window.activateCitationScope && window.activateCitationScope(event); window.openEvidenceDrawer && window.openEvidenceDrawer('${snippetId}')">[${snippetId}]</span>`;
+    }
+  );
+
+  // 兼容旧格式 [数字]（如果 LLM 没有使用新格式）
   html = html.replace(
     /\[(\d+)\]/g,
     (match, num) => {
-      const docName = citationMap[num] || `引用 ${num}`;
-      // 转义引号以防止HTML属性问题
-      const escapedDocName = docName.replace(/"/g, '&quot;');
-      return `<span class="citation-badge" title="${escapedDocName}">[${num}]</span>`;
+      const docName = textCitationMap[num];
+
+      let tooltipContent = `引用 ${num}`;
+      let hasMetadata = false;
+
+      if (docName && citationMetadata.value) {
+        const metadata = findCitationMetadata(docName);
+        if (metadata) {
+          hasMetadata = true;
+          const parts = [];
+          if (metadata.academic_title) parts.push(`📄 ${metadata.academic_title}`);
+          else parts.push(`📄 ${docName}`);
+          if (metadata.authors && metadata.authors.length > 0) {
+            const authorStr = metadata.authors.length > 3
+              ? `${metadata.authors.slice(0, 3).join(', ')} 等`
+              : metadata.authors.join(', ');
+            parts.push(`👤 ${authorStr}`);
+          }
+          if (metadata.publish_year) parts.push(`📅 ${metadata.publish_year}年`);
+          if (metadata.doi) parts.push(`🔗 DOI: ${metadata.doi}`);
+          tooltipContent = parts.join('\n');
+        }
+      }
+
+      if (!hasMetadata && docName) {
+        tooltipContent = docName;
+      }
+
+      const escapedTooltip = tooltipContent.replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
+      const escapedDocName = docName ? docName.replace(/"/g, '&quot;') : '';
+      const badgeClass = hasMetadata ? 'citation-badge citation-badge-enhanced' : 'citation-badge';
+
+      return `<span class="${badgeClass} citation-clickable" title="${escapedTooltip}" data-citation="${num}" data-doc-name="${escapedDocName}" onmouseenter="window.setCitationTargetHover && window.setCitationTargetHover(event, true)" onmouseleave="window.setCitationTargetHover && window.setCitationTargetHover(event, false)" onclick="window.activateCitationScope && window.activateCitationScope(event); window.openEvidenceDrawer && window.openEvidenceDrawer('${escapedDocName}')">[${num}]</span>`;
     }
   );
-  
+
   return html;
 };
 
@@ -1431,6 +1875,91 @@ const getNodeDisplayName = (nodeName) => {
   };
   return nodeNameMap[nodeName] || nodeName;
 };
+
+// PR-2 阶段D改造: 打开证据抽屉，支持按片段编号精确查找
+const openEvidenceDrawer = (idOrDocName) => {
+  if (!idOrDocName) {
+    ElMessage.info('暂无原文信息');
+    return;
+  }
+
+  // 判断是片段编号(S1, S2...)还是文献名
+  const isSnippetId = /^S\d+$/.test(idOrDocName);
+
+  if (isSnippetId && snippetMap.value && snippetMap.value[idOrDocName]) {
+    // 新格式：精确查找单个片段
+    const snippetInfo = snippetMap.value[idOrDocName];
+    const docName = snippetInfo.source || '未知来源';
+
+    // 查找文献元数据
+    let metadata = null;
+    if (citationMetadata.value) {
+      metadata = findCitationMetadata(docName);
+    }
+
+    // 设置当前查看的文献信息
+    currentEvidenceDoc.value = {
+      name: docName,
+      title: metadata?.academic_title || docName,
+      authors: metadata?.authors || [],
+      year: metadata?.publish_year,
+      doi: metadata?.doi,
+      sourceType: metadata?.source_type,
+      snippetId: idOrDocName  // 当前片段编号
+    };
+    currentEvidenceSnippets.value = toEvidenceSnippet(idOrDocName, snippetInfo);
+    currentEvidenceFullContent.value = snippetInfo.content;  // 完整内容供展开查看
+    evidenceExpandedContext.value = false;  // 重置展开状态
+    evidenceDrawerVisible.value = true;
+  } else {
+    // 旧格式兼容：按文献名查找
+    let metadata = null;
+    if (citationMetadata.value) {
+      metadata = findCitationMetadata(idOrDocName);
+    }
+
+    // 从 snippetMap 中收集该文献的所有片段
+    let snippets = [];
+    if (snippetMap.value) {
+      for (const [sid, info] of Object.entries(snippetMap.value)) {
+        if (info.source === idOrDocName || info.raw_source === idOrDocName) {
+          snippets.push(...toEvidenceSnippet(sid, info).slice(0, 1));
+        }
+      }
+
+      snippets.sort((left, right) => {
+        const leftMatch = typeof left?.id === 'string' ? left.id.match(/^S(\d+)/) : null;
+        const rightMatch = typeof right?.id === 'string' ? right.id.match(/^S(\d+)/) : null;
+        return Number(leftMatch?.[1] || 0) - Number(rightMatch?.[1] || 0);
+      });
+    }
+
+    if (snippets.length === 0 && !metadata) {
+      ElMessage.info('暂无该文献的证据片段');
+      return;
+    }
+
+    currentEvidenceDoc.value = {
+      name: idOrDocName,
+      title: metadata?.academic_title || idOrDocName,
+      authors: metadata?.authors || [],
+      year: metadata?.publish_year,
+      doi: metadata?.doi,
+      sourceType: metadata?.source_type
+    };
+    currentEvidenceSnippets.value = snippets;
+    currentEvidenceFullContent.value = null;  // 多片段模式不需要展开
+    evidenceExpandedContext.value = false;
+    evidenceDrawerVisible.value = true;
+  }
+};
+
+// 将函数暴露到 window 对象，供 v-html 中的 onclick 调用
+onMounted(async () => {
+  window.openEvidenceDrawer = openEvidenceDrawer;
+  window.activateCitationScope = activateCitationScope;
+  window.setCitationTargetHover = setCitationTargetHover;
+});
 
 // 加载知识库列表
 const loadKnowledgeLibraries = async () => {
@@ -1488,6 +2017,32 @@ const loadSelectedLibraryDocuments = async (libraryId) => {
   } catch (error) {
       console.error("加载知识库文献列表失败:", error);
     selectedLibraryDocuments.value = [];
+  }
+};
+
+// PR-2: 加载知识库的学术引用元数据（用于历史对话显示）
+const loadCitationMetadata = async (libraryId) => {
+  if (!libraryId) {
+    chatStore.citationMetadata = {};
+    return;
+  }
+
+  try {
+    // 获取知识库的 collection_id
+    const collectionId = getSelectedLibraryCollectionId(libraryId);
+    if (!collectionId) {
+      console.log('📚 未找到 collection_id，跳过加载引用元数据');
+      return;
+    }
+
+    const response = await knowledgeAPI.getCitationMetadata(collectionId);
+    if (response.status === 200 && response.data) {
+      chatStore.citationMetadata = response.data;
+      console.log(`📚 已加载引用元数据: ${Object.keys(response.data).length} 个文献`);
+    }
+  } catch (error) {
+    console.error("加载引用元数据失败:", error);
+    // 失败时不影响正常使用
   }
 };
 
@@ -1594,6 +2149,8 @@ const truncateText = (text, maxLength) => {
 // 监听知识库选择变化，加载文献列表
 watch(selectedLibrary, (newLibraryId) => {
   loadSelectedLibraryDocuments(newLibraryId);
+  // PR-2: 选择知识库时获取学术元数据，用于历史对话显示
+  loadCitationMetadata(newLibraryId);
 });
 
 // 监听点击外部关闭下拉框
@@ -1627,6 +2184,7 @@ onMounted(async () => {
 
   // 恢复Agent面板宽度
   restorePanelWidth();
+  restoreEvidenceDrawerWidth();
 
   // 加载聊天历史
   if (authStore.isAuthenticated) {
@@ -1739,6 +2297,16 @@ watch(selectedLibrary, (newLibrary) => {
     : "不使用知识库";
   console.log("  -> 知识库名称:", libraryName);
   localStorage.setItem("selectedLibrary", newLibrary);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("mousemove", handleResize);
+  document.removeEventListener("mouseup", stopResize);
+  document.removeEventListener("mousemove", handleEvidenceResize);
+  document.removeEventListener("mouseup", stopEvidenceResize);
+  delete window.openEvidenceDrawer;
+  delete window.activateCitationScope;
+  delete window.setCitationTargetHover;
 });
 
 // 检查认证状态
@@ -1885,6 +2453,40 @@ const stopResize = () => {
   localStorage.setItem("agentPanelWidth", agentPanelWidth.value.toString());
 };
 
+const startEvidenceResize = (e) => {
+  isEvidenceResizing.value = true;
+  evidenceStartX.value = e.clientX;
+  evidenceStartWidth.value = evidenceDrawerWidth.value;
+
+  document.addEventListener("mousemove", handleEvidenceResize);
+  document.addEventListener("mouseup", stopEvidenceResize);
+
+  e.preventDefault();
+};
+
+const handleEvidenceResize = (e) => {
+  if (!isEvidenceResizing.value) return;
+
+  const deltaX = evidenceStartX.value - e.clientX;
+  const newWidth = evidenceStartWidth.value + deltaX;
+
+  const minWidth = 420;
+  const maxWidth = Math.min(window.innerWidth - 120, 1100);
+
+  if (newWidth >= minWidth && newWidth <= maxWidth) {
+    evidenceDrawerWidth.value = newWidth;
+  }
+};
+
+const stopEvidenceResize = () => {
+  isEvidenceResizing.value = false;
+
+  document.removeEventListener("mousemove", handleEvidenceResize);
+  document.removeEventListener("mouseup", stopEvidenceResize);
+
+  localStorage.setItem("evidenceDrawerWidth", evidenceDrawerWidth.value.toString());
+};
+
 // 从localStorage恢复面板宽度
 const restorePanelWidth = () => {
   const savedWidth = localStorage.getItem("agentPanelWidth");
@@ -1892,6 +2494,17 @@ const restorePanelWidth = () => {
     const width = parseInt(savedWidth);
     if (width >= 300 && width <= 800) {
       agentPanelWidth.value = width;
+    }
+  }
+};
+
+const restoreEvidenceDrawerWidth = () => {
+  const savedWidth = localStorage.getItem("evidenceDrawerWidth");
+  if (savedWidth) {
+    const width = parseInt(savedWidth);
+    const maxWidth = Math.min(window.innerWidth - 120, 1100);
+    if (width >= 420 && width <= maxWidth) {
+      evidenceDrawerWidth.value = width;
     }
   }
 };
@@ -1983,5 +2596,47 @@ const restorePanelWidth = () => {
 :deep(.citation-badge:hover) {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+/* PR-2: 增强引用标记样式 - 有完整学术元数据时显示金色样式 */
+:deep(.citation-badge-enhanced) {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+:deep(.citation-badge-enhanced:hover) {
+  background: #fde68a;
+  color: #78350f;
+}
+
+/* PR-2 阶段D: 可点击的引用标记样式 */
+:deep(.citation-clickable) {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+:deep(.citation-clickable:hover) {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+:deep(.citation-clickable:active) {
+  transform: scale(0.95);
+}
+
+:deep(.prose p.citation-target-hover),
+:deep(.prose li.citation-target-hover) {
+  background: rgba(251, 191, 36, 0.1);
+  box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+:deep(.prose p.citation-target-active),
+:deep(.prose li.citation-target-active) {
+  background: rgba(251, 191, 36, 0.16);
+  box-shadow: inset 3px 0 0 rgba(217, 119, 6, 0.5);
+  border-radius: 8px;
 }
 </style>

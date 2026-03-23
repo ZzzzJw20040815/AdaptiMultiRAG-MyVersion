@@ -351,6 +351,93 @@ async def delete_document(document_id: int, user_id: str) -> Response:
         return Response.error(f"删除文档失败: {str(e)}")
 
 
+async def update_document_academic_metadata(
+    collection_id: str,
+    url: str,
+    metadata: dict,
+    parse_status: str = "completed",
+    parse_error: str = None
+) -> bool:
+    """
+    更新文档的学术元数据（内部服务调用）
+
+    Args:
+        collection_id: 知识库的 collection_id
+        url: 文档的 URL（用于定位文档）
+        metadata: 学术元数据字典，包含以下可选字段：
+            - academic_title: 论文标题
+            - authors: 作者列表（JSON字符串）
+            - abstract: 摘要
+            - keywords: 关键词（JSON字符串）
+            - publish_year: 发表年份
+            - doi: DOI标识
+            - source_type: 来源类型
+        parse_status: 解析状态 (pending/processing/completed/failed)
+        parse_error: 解析错误信息
+
+    Returns:
+        bool: 是否更新成功
+    """
+    try:
+        db = DatabaseFactory.create_session()
+
+        try:
+            # 1. 根据 collection_id 查找知识库
+            library = db.query(KnowledgeLibrary).filter(
+                KnowledgeLibrary.collection_id == collection_id,
+                KnowledgeLibrary.is_active == True
+            ).first()
+
+            if not library:
+                logger.warning(f"未找到 collection_id={collection_id} 的知识库")
+                return False
+
+            # 2. 根据 library_id 和 url 查找文档
+            document = db.query(KnowledgeDocument).filter(
+                KnowledgeDocument.library_id == library.id,
+                KnowledgeDocument.url == url
+            ).first()
+
+            if not document:
+                logger.warning(f"未找到 url={url} 的文档")
+                return False
+
+            # 3. 更新学术元数据字段
+            if metadata.get("academic_title"):
+                document.academic_title = metadata["academic_title"]
+                # 同时更新 name 字段为论文标题（如果有）
+                document.name = metadata["academic_title"]
+            if metadata.get("authors"):
+                document.authors = metadata["authors"]
+            if metadata.get("abstract"):
+                document.abstract = metadata["abstract"]
+            if metadata.get("keywords"):
+                document.keywords = metadata["keywords"]
+            if metadata.get("publish_year"):
+                document.publish_year = metadata["publish_year"]
+            if metadata.get("doi"):
+                document.doi = metadata["doi"]
+            if metadata.get("source_type"):
+                document.source_type = metadata["source_type"]
+
+            # 4. 更新解析状态
+            document.parse_status = parse_status
+            if parse_error:
+                document.parse_error = parse_error
+
+            db.commit()
+
+            logger.info(f"成功更新文档学术元数据: title={metadata.get('academic_title')}, status={parse_status}")
+            return True
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"更新文档学术元数据失败: {str(e)}")
+        return False
+
+
 async def update_document_name_by_url(collection_id: str, url: str, new_name: str) -> bool:
     """
     根据 URL 更新文档名称（内部服务调用）

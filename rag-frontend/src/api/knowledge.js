@@ -262,6 +262,22 @@ class KnowledgeLibraryAPI {
       throw error
     }
   }
+
+  /**
+   * PR-2: 获取知识库的学术引用元数据
+   * 用于历史对话中显示引用标记的学术信息
+   * @param {string} collectionId - 集合ID
+   * @returns {Promise} API响应，包含文献名到学术元数据的映射
+   */
+  async getCitationMetadata(collectionId) {
+    try {
+      const response = await httpClient.get(`/api/knowledge/citation-metadata/${collectionId}`)
+      return response
+    } catch (error) {
+      console.error('获取引用元数据失败:', error)
+      throw error
+    }
+  }
 }
 
 // 创建并导出API实例

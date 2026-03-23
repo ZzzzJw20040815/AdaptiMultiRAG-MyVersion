@@ -7,12 +7,17 @@ Reranker 服务层
 """
 
 import os
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional
 from dataclasses import dataclass
 import dashscope
 from dashscope import TextReRank
 
 from backend.config.log import get_logger
+from backend.service.chunk_filter import (
+    normalize_title_front_matter_text,
+    is_title_page_metadata_text,
+)
 
 logger = get_logger(__name__)
 
@@ -128,11 +133,18 @@ class RerankerService:
             
             if response.status_code != 200:
                 logger.error(f"Rerank API 调用失败: {response.code} - {response.message}")
-                return documents
+                return self._local_fallback_rerank(
+                    query=query,
+                    documents=documents,
+                    top_k=effective_top_k
+                )
             
             # 解析结果并过滤
             reranked_docs = []
             results = response.output.get("results", [])
+            
+            # 记录所有结果用于兜底（按分数排序）
+            all_scored_docs = []
             
             for result in results:
                 index = result.get("index")
@@ -141,9 +153,11 @@ class RerankerService:
                 if index is None or index >= len(documents):
                     continue
                 
+                doc = documents[index]
+                all_scored_docs.append((doc, score, index))
+                
                 # 根据阈值过滤
                 if score >= effective_threshold:
-                    doc = documents[index]
                     # 将相关性分数添加到 metadata
                     if hasattr(doc, 'metadata'):
                         doc.metadata["rerank_score"] = score
@@ -151,6 +165,23 @@ class RerankerService:
                     logger.debug(f"保留文档 index={index}, score={score:.4f}")
                 else:
                     logger.debug(f"过滤文档 index={index}, score={score:.4f} < threshold={effective_threshold}")
+            
+            # 兜底机制：如果所有文档都被过滤掉了，保留分数最高的 top-1 文档
+            # 这样可以确保即使问题较泛泛，也不会完全没有内容可用于回答
+            if not reranked_docs and all_scored_docs:
+                # 按分数降序排序
+                all_scored_docs.sort(key=lambda x: x[1], reverse=True)
+                top_doc, top_score, top_index = all_scored_docs[0]
+                
+                if hasattr(top_doc, 'metadata'):
+                    top_doc.metadata["rerank_score"] = top_score
+                    top_doc.metadata["rerank_fallback"] = True  # 标记为兜底保留
+                
+                reranked_docs.append(top_doc)
+                logger.info(
+                    f"[Rerank兜底] 所有文档分数低于阈值{effective_threshold}，"
+                    f"保留分数最高的文档 index={top_index}, score={top_score:.4f}"
+                )
             
             logger.info(
                 f"Rerank 完成: 输入={len(documents)}, 输出={len(reranked_docs)} "
@@ -161,8 +192,12 @@ class RerankerService:
             
         except Exception as e:
             logger.error(f"Rerank 失败: {e}")
-            # 出错时返回原始文档，不影响主流程
-            return documents
+            # API 失败时执行本地降权重排，避免标题页元数据片段排在首位
+            return self._local_fallback_rerank(
+                query=query,
+                documents=documents,
+                top_k=effective_top_k
+            )
     
     def _get_document_content(self, doc) -> str:
         """获取文档的文本内容"""
@@ -173,6 +208,63 @@ class RerankerService:
         elif isinstance(doc, dict):
             return doc.get('page_content', doc.get('content', ''))
         return str(doc)
+
+    def _local_fallback_rerank(self, query: str, documents: List, top_k: int) -> List:
+        """
+        本地兜底重排（当 API Key 无效或接口失败时）。
+        
+        策略：
+        - 用 query-token 重叠进行轻量打分
+        - 对标题页元数据文本施加强惩罚，避免其成为 S1
+        """
+        if not documents:
+            return documents
+        
+        query_tokens = set(re.findall(r'[\w\u4e00-\u9fff]+', (query or "").lower()))
+        if not query_tokens:
+            return documents[:top_k] if top_k > 0 else documents
+        
+        scored_docs = []
+        for idx, doc in enumerate(documents):
+            raw_content = self._get_document_content(doc)
+            normalized_content = normalize_title_front_matter_text(raw_content, min_content_length=30)
+            content_for_score = normalized_content or raw_content
+            doc_tokens = set(re.findall(r'[\w\u4e00-\u9fff]+', content_for_score.lower()))
+            
+            overlap = len(query_tokens & doc_tokens) / max(len(query_tokens), 1)
+            length_bonus = min(len(content_for_score) / 1200.0, 0.15)
+            
+            metadata_penalty = 0.0
+            if is_title_page_metadata_text(raw_content):
+                metadata_penalty -= 0.60
+            elif normalized_content != raw_content:
+                # 命中“标题页前缀清理”但仍有正文，降权但不过滤
+                metadata_penalty -= 0.25
+            
+            score = overlap + length_bonus + metadata_penalty
+            scored_docs.append((score, idx, doc))
+        
+        scored_docs.sort(key=lambda x: x[0], reverse=True)
+        selected = scored_docs[:top_k] if top_k > 0 else scored_docs
+        
+        reranked_docs = []
+        for score, _, doc in selected:
+            if hasattr(doc, 'metadata'):
+                doc.metadata["rerank_score"] = score
+                doc.metadata["rerank_fallback"] = True
+                doc.metadata["rerank_source"] = "local_fallback"
+            reranked_docs.append(doc)
+        
+        rank_debug = []
+        for score, _, doc in selected[:3]:
+            preview = self._get_document_content(doc)[:60].replace('\n', ' ')
+            rank_debug.append(f"{score:.3f}:{preview}")
+        
+        logger.info(
+            f"[Rerank本地兜底] API失败，执行本地降权重排: 输入={len(documents)}, 输出={len(reranked_docs)}, "
+            f"top={rank_debug}"
+        )
+        return reranked_docs
     
     def update_config(self, **kwargs) -> None:
         """
